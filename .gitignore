@@ -16,6 +16,15 @@ target
 # Temporary agent files
 .harness/
 
+# Rust
+/target/
+
+# Frontend
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
 # RustRover
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
 #  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore

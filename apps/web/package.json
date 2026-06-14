@@ -1,0 +1,26 @@
+{
+  "name": "@kasdex/web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc -b && vite build",
+    "typecheck": "tsc -b --pretty false",
+    "api:generate": "openapi-typescript src/api/openapi.json -o src/api/schema.ts",
+    "api:check": "npm run api:generate -- --check"
+  },
+  "dependencies": {
+    "@preact/signals": "^2.0.1",
+    "@tanstack/preact-query": "^5.80.7",
+    "@tanstack/virtual-core": "^3.13.10",
+    "openapi-fetch": "^0.14.0",
+    "preact": "^10.26.9"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.10.5",
+    "openapi-typescript": "^7.8.0",
+    "typescript": "^5.8.3",
+    "vite": "^8.0.16"
+  }
+}

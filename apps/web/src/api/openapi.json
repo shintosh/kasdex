@@ -1,0 +1,399 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Kasdex API",
+    "description": "Local-first Kaspa indexer and dashboard API",
+    "license": {
+      "name": "MIT",
+      "identifier": "MIT"
+    },
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/v1/blocks": {
+      "get": {
+        "tags": [
+          "blocks"
+        ],
+        "operationId": "listBlocks",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated block summaries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid pagination query",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/health": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "operationId": "getHealth",
+        "responses": {
+          "200": {
+            "description": "Service health",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/indexer/status": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "operationId": "getIndexerStatus",
+        "responses": {
+          "200": {
+            "description": "Indexer status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IndexerStatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/search": {
+      "get": {
+        "tags": [
+          "search"
+        ],
+        "operationId": "search",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Search result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid search query",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ApiError": {
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "BlockSummary": {
+        "type": "object",
+        "required": [
+          "hash",
+          "blue_score",
+          "daa_score",
+          "tx_count",
+          "timestamp"
+        ],
+        "properties": {
+          "blue_score": {
+            "type": "string"
+          },
+          "daa_score": {
+            "type": "string"
+          },
+          "hash": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "tx_count": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "HealthResponse": {
+        "type": "object",
+        "required": [
+          "status",
+          "version"
+        ],
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "IndexedContext": {
+        "type": "object",
+        "required": [
+          "network",
+          "is_synced",
+          "source"
+        ],
+        "properties": {
+          "indexed_score": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "is_synced": {
+            "type": "boolean"
+          },
+          "network": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "virtual_daa_score": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "IndexerStatusResponse": {
+        "type": "object",
+        "required": [
+          "state",
+          "network",
+          "source"
+        ],
+        "properties": {
+          "indexed_score": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lag_blocks": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "network": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "virtual_daa_score": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page": {
+        "type": "object",
+        "required": [
+          "items",
+          "indexed_context"
+        ],
+        "properties": {
+          "indexed_context": {
+            "$ref": "#/components/schemas/IndexedContext"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BlockSummary"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "SearchResponse": {
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "result": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SearchResult"
+              }
+            ]
+          }
+        }
+      },
+      "SearchResult": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "address",
+              "kind"
+            ],
+            "properties": {
+              "address": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "address"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "hash",
+              "kind"
+            ],
+            "properties": {
+              "hash": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "block"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "txid",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "transaction"
+                ]
+              },
+              "txid": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "system",
+      "description": "System and indexer status"
+    },
+    {
+      "name": "blocks",
+      "description": "Block queries"
+    },
+    {
+      "name": "search",
+      "description": "Search"
+    }
+  ]
+}
