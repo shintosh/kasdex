@@ -2,8 +2,8 @@ use std::path::Path;
 
 use kasdex_store::{
     AddressHistoryRecord, AddressUtxoRecord, BlockEffectRecordV1, BlockSummaryRecord, ChainStore,
-    Checkpoint, CoverageRangeRecord, Page, StoreError, StoreMetadata, StoreResult,
-    TxDetailRecordV1, TxSummaryRecord,
+    Checkpoint, CoverageRangeRecord, IndexedBlockWrite, OutpointStateRecord, Page, StoreError,
+    StoreMetadata, StoreResult, TxDetailRecordV1, TxSummaryRecord, UnresolvedSpendRecord,
 };
 use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, DB, Direction, IteratorMode, Options};
 use serde::{Serialize, de::DeserializeOwned};
@@ -142,40 +142,78 @@ impl ChainStore for RocksStore {
         self.db.write(batch).map_err(rocks_err)
     }
 
-    fn put_indexed_block(
-        &self,
-        block: &BlockSummaryRecord,
-        txs: &[TxSummaryRecord],
-        tx_details: &[TxDetailRecordV1],
-        effect: &BlockEffectRecordV1,
-        checkpoint: &Checkpoint,
-        coverage: &CoverageRangeRecord,
-    ) -> StoreResult<()> {
+    fn put_indexed_block(&self, write: IndexedBlockWrite<'_>) -> StoreResult<()> {
         let blocks_by_hash_cf = self.cf(BLOCKS_BY_HASH)?;
         let blocks_by_score_cf = self.cf(BLOCKS_BY_SCORE)?;
         let tx_by_id_cf = self.cf(TX_BY_ID)?;
         let tx_detail_by_id_cf = self.cf(TX_DETAIL_BY_ID)?;
+        let address_history_cf = self.cf(ADDRESS_HISTORY)?;
+        let address_utxos_cf = self.cf(ADDRESS_UTXOS)?;
+        let outpoint_state_cf = self.cf(OUTPOINT_STATE)?;
+        let spends_by_outpoint_cf = self.cf(SPENDS_BY_OUTPOINT)?;
         let block_effects_cf = self.cf(BLOCK_EFFECTS)?;
         let meta_cf = self.cf(META)?;
         let coverage_cf = self.cf(COVERAGE_RANGES)?;
 
         let mut batch = rocksdb::WriteBatch::default();
-        let encoded_block = encode(block)?;
-        batch.put_cf(&blocks_by_hash_cf, block.hash, &encoded_block);
+        let encoded_block = encode(write.block)?;
+        batch.put_cf(&blocks_by_hash_cf, write.block.hash, &encoded_block);
         batch.put_cf(
             &blocks_by_score_cf,
-            block_score_key(block.blue_score, &block.hash),
+            block_score_key(write.block.blue_score, &write.block.hash),
             &encoded_block,
         );
-        for tx in txs {
+        for tx in write.txs {
             batch.put_cf(&tx_by_id_cf, tx.txid, encode(tx)?);
         }
-        for detail in tx_details {
+        for detail in write.tx_details {
             batch.put_cf(&tx_detail_by_id_cf, detail.txid, encode(detail)?);
         }
-        batch.put_cf(&block_effects_cf, effect.block_hash, encode(effect)?);
-        batch.put_cf(&meta_cf, CHECKPOINT_KEY, encode(checkpoint)?);
-        batch.put_cf(&coverage_cf, &coverage.range_id, encode(coverage)?);
+        for event in write.address_history {
+            batch.put_cf(
+                &address_history_cf,
+                address_history_key(event),
+                encode(event)?,
+            );
+        }
+        for utxo in write.address_utxos {
+            batch.put_cf(
+                &address_utxos_cf,
+                address_utxo_key(&utxo.script_hash, &utxo.txid, utxo.output_index),
+                encode(utxo)?,
+            );
+        }
+        for utxo in write.spent_address_utxos {
+            batch.delete_cf(
+                &address_utxos_cf,
+                address_utxo_key(&utxo.script_hash, &utxo.txid, utxo.output_index),
+            );
+        }
+        for outpoint in write.outpoint_states {
+            batch.put_cf(
+                &outpoint_state_cf,
+                outpoint_key(&outpoint.txid, outpoint.output_index),
+                encode(outpoint)?,
+            );
+        }
+        for spend in write.unresolved_spends {
+            batch.put_cf(
+                &spends_by_outpoint_cf,
+                unresolved_spend_key(spend),
+                encode(spend)?,
+            );
+        }
+        batch.put_cf(
+            &block_effects_cf,
+            write.effect.block_hash,
+            encode(write.effect)?,
+        );
+        batch.put_cf(&meta_cf, CHECKPOINT_KEY, encode(write.checkpoint)?);
+        batch.put_cf(
+            &coverage_cf,
+            &write.coverage.range_id,
+            encode(write.coverage)?,
+        );
 
         self.db.write(batch).map_err(rocks_err)
     }
@@ -307,6 +345,26 @@ impl ChainStore for RocksStore {
         let cf = self.cf(ADDRESS_UTXOS)?;
         page_prefix(&self.db, cf, script_hash, cursor, limit)
     }
+
+    fn put_outpoint_state(&self, outpoint: &OutpointStateRecord) -> StoreResult<()> {
+        self.put_encoded(
+            OUTPOINT_STATE,
+            outpoint_key(&outpoint.txid, outpoint.output_index),
+            outpoint,
+        )
+    }
+
+    fn outpoint_state(
+        &self,
+        txid: &[u8; 32],
+        output_index: u32,
+    ) -> StoreResult<Option<OutpointStateRecord>> {
+        self.get_decoded(OUTPOINT_STATE, outpoint_key(txid, output_index))
+    }
+
+    fn put_unresolved_spend(&self, spend: &UnresolvedSpendRecord) -> StoreResult<()> {
+        self.put_encoded(SPENDS_BY_OUTPOINT, unresolved_spend_key(spend), spend)
+    }
 }
 
 fn column_families() -> [&'static str; 13] {
@@ -366,6 +424,21 @@ fn address_utxo_key(script_hash: &[u8; 32], txid: &[u8; 32], output_index: u32) 
     key
 }
 
+fn outpoint_key(txid: &[u8; 32], output_index: u32) -> [u8; 36] {
+    let mut key = [0_u8; 36];
+    key[..32].copy_from_slice(txid);
+    key[32..].copy_from_slice(&output_index.to_be_bytes());
+    key
+}
+
+fn unresolved_spend_key(spend: &UnresolvedSpendRecord) -> [u8; 68] {
+    let mut key = [0_u8; 68];
+    key[..32].copy_from_slice(&spend.previous_txid);
+    key[32..36].copy_from_slice(&spend.previous_output_index.to_be_bytes());
+    key[36..68].copy_from_slice(&spend.spending_txid);
+    key
+}
+
 fn page_prefix<T: DeserializeOwned>(
     db: &DB,
     cf: &ColumnFamily,
@@ -400,7 +473,8 @@ fn page_prefix<T: DeserializeOwned>(
 #[cfg(test)]
 mod tests {
     use kasdex_store::{
-        BlockEffectRecordV1, ChainStore, CoverageClass, CoverageRangeRecord, TxDetailRecordV1,
+        AddressHistoryRecord, AddressUtxoRecord, BlockEffectRecordV1, ChainStore, CoverageClass,
+        CoverageRangeRecord, IndexedBlockWrite, OutpointStateRecord, TxDetailRecordV1,
         TxInputRecordV1, TxOutputRecordV1,
     };
     use tempfile::TempDir;
@@ -674,6 +748,30 @@ mod tests {
             spent_outpoints: Vec::new(),
             address_event_keys: Vec::new(),
         };
+        let history = AddressHistoryRecord {
+            script_hash: bytes(12),
+            daa_score: block.daa_score,
+            txid: tx.txid,
+            event_index: 0,
+            amount: 100,
+        };
+        let utxo = AddressUtxoRecord {
+            script_hash: history.script_hash,
+            txid: tx.txid,
+            output_index: 0,
+            amount: 100,
+            created_daa_score: block.daa_score,
+        };
+        let outpoint = OutpointStateRecord {
+            txid: tx.txid,
+            output_index: 0,
+            amount: 100,
+            script_hash: history.script_hash,
+            address: None,
+            created_daa_score: block.daa_score,
+            spent_by: None,
+            spent_daa_score: None,
+        };
         let checkpoint = Checkpoint {
             network: "kaspa-mainnet".to_owned(),
             daa_score: block.daa_score,
@@ -691,14 +789,19 @@ mod tests {
         };
 
         store
-            .put_indexed_block(
-                &block,
-                std::slice::from_ref(&tx),
-                std::slice::from_ref(&detail),
-                &effect,
-                &checkpoint,
-                &coverage,
-            )
+            .put_indexed_block(IndexedBlockWrite {
+                block: &block,
+                txs: std::slice::from_ref(&tx),
+                tx_details: std::slice::from_ref(&detail),
+                address_history: std::slice::from_ref(&history),
+                address_utxos: std::slice::from_ref(&utxo),
+                spent_address_utxos: &[],
+                outpoint_states: std::slice::from_ref(&outpoint),
+                unresolved_spends: &[],
+                effect: &effect,
+                checkpoint: &checkpoint,
+                coverage: &coverage,
+            })
             .unwrap();
 
         assert_eq!(store.block_by_hash(&block.hash).unwrap(), Some(block));
@@ -707,6 +810,26 @@ mod tests {
         assert_eq!(
             store.block_effect_by_hash(&effect.block_hash).unwrap(),
             Some(effect)
+        );
+        assert_eq!(
+            store
+                .address_history(&history.script_hash, None, 10)
+                .unwrap()
+                .items,
+            vec![history]
+        );
+        assert_eq!(
+            store
+                .address_utxos(&utxo.script_hash, None, 10)
+                .unwrap()
+                .items,
+            vec![utxo]
+        );
+        assert_eq!(
+            store
+                .outpoint_state(&outpoint.txid, outpoint.output_index)
+                .unwrap(),
+            Some(outpoint)
         );
         assert_eq!(store.checkpoint().unwrap(), Some(checkpoint));
         assert_eq!(

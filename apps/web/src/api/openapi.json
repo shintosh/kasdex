@@ -152,6 +152,126 @@
         }
       }
     },
+    "/api/v1/scripts/{script_hash}/history": {
+      "get": {
+        "tags": [
+          "scripts"
+        ],
+        "operationId": "getScriptHistory",
+        "parameters": [
+          {
+            "name": "script_hash",
+            "in": "path",
+            "description": "32-byte script hash as hex",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Coverage-limited script history",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptHistoryPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid script hash or cursor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scripts/{script_hash}/utxos": {
+      "get": {
+        "tags": [
+          "scripts"
+        ],
+        "operationId": "getScriptUtxos",
+        "parameters": [
+          {
+            "name": "script_hash",
+            "in": "path",
+            "description": "32-byte script hash as hex",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Coverage-limited script UTXOs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptUtxoPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid script hash or cursor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/search": {
       "get": {
         "tags": [
@@ -581,6 +701,120 @@
           }
         }
       },
+      "ScriptHistoryEvent": {
+        "type": "object",
+        "required": [
+          "script_hash",
+          "daa_score",
+          "txid",
+          "event_index",
+          "amount",
+          "balance_trust_level"
+        ],
+        "properties": {
+          "amount": {
+            "type": "string"
+          },
+          "balance_trust_level": {
+            "type": "string"
+          },
+          "daa_score": {
+            "type": "string"
+          },
+          "event_index": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "script_hash": {
+            "type": "string"
+          },
+          "txid": {
+            "type": "string"
+          }
+        }
+      },
+      "ScriptHistoryPage": {
+        "type": "object",
+        "required": [
+          "items",
+          "indexed_context"
+        ],
+        "properties": {
+          "indexed_context": {
+            "$ref": "#/components/schemas/IndexedContext"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScriptHistoryEvent"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ScriptUtxo": {
+        "type": "object",
+        "required": [
+          "script_hash",
+          "txid",
+          "output_index",
+          "amount",
+          "created_daa_score",
+          "balance_trust_level"
+        ],
+        "properties": {
+          "amount": {
+            "type": "string"
+          },
+          "balance_trust_level": {
+            "type": "string"
+          },
+          "created_daa_score": {
+            "type": "string"
+          },
+          "output_index": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "script_hash": {
+            "type": "string"
+          },
+          "txid": {
+            "type": "string"
+          }
+        }
+      },
+      "ScriptUtxoPage": {
+        "type": "object",
+        "required": [
+          "items",
+          "indexed_context"
+        ],
+        "properties": {
+          "indexed_context": {
+            "$ref": "#/components/schemas/IndexedContext"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScriptUtxo"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "SearchResponse": {
         "type": "object",
         "required": [
@@ -862,6 +1096,10 @@
     {
       "name": "blocks",
       "description": "Block queries"
+    },
+    {
+      "name": "scripts",
+      "description": "Script-hash history and UTXO queries"
     },
     {
       "name": "search",

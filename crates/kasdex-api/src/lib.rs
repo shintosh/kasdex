@@ -13,8 +13,8 @@ pub use error::ApiError;
 use kasdex_core::IndexedContext;
 use kasdex_indexer::{IndexerRuntimeStatus, IndexerStatusHandle};
 use kasdex_store::{
-    BlockSummaryRecord, ChainStore, CoverageClass, CoverageRangeRecord, StoreError,
-    TxDetailRecordV1, TxSummaryRecord,
+    AddressHistoryRecord, AddressUtxoRecord, BlockSummaryRecord, ChainStore, CoverageClass,
+    CoverageRangeRecord, StoreError, TxDetailRecordV1, TxSummaryRecord,
 };
 use tower_http::trace::TraceLayer;
 use utoipa::OpenApi;
@@ -26,7 +26,16 @@ const CURSOR_TYPE_RECENT_BLOCKS: u8 = 1;
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(health, indexer_status, list_blocks, get_block, get_transaction, search),
+    paths(
+        health,
+        indexer_status,
+        list_blocks,
+        get_block,
+        get_transaction,
+        get_script_history,
+        get_script_utxos,
+        search
+    ),
     components(schemas(
         ApiError,
         BlockDetail,
@@ -37,6 +46,10 @@ const CURSOR_TYPE_RECENT_BLOCKS: u8 = 1;
         IndexerStatusResponse,
         SearchResponse,
         SearchResult,
+        ScriptHistoryEvent,
+        ScriptHistoryPage,
+        ScriptUtxo,
+        ScriptUtxoPage,
         TransactionDetail,
         TransactionInput,
         TransactionOutput,
@@ -46,6 +59,7 @@ const CURSOR_TYPE_RECENT_BLOCKS: u8 = 1;
     tags(
         (name = "system", description = "System and indexer status"),
         (name = "blocks", description = "Block queries"),
+        (name = "scripts", description = "Script-hash history and UTXO queries"),
         (name = "search", description = "Search")
     ),
     info(
@@ -110,6 +124,8 @@ pub fn router_with_state(state: ApiState) -> Router {
         .route("/blocks", get(list_blocks))
         .route("/blocks/{hash}", get(get_block))
         .route("/transactions/{txid}", get(get_transaction))
+        .route("/scripts/{script_hash}/history", get(get_script_history))
+        .route("/scripts/{script_hash}/utxos", get(get_script_utxos))
         .route("/search", get(search));
 
     Router::new()
@@ -291,6 +307,86 @@ async fn get_transaction(
     tx.map(|tx| transaction_summary(tx, detail))
         .map(Json)
         .ok_or_else(|| ApiError::not_found("transaction not found"))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/scripts/{script_hash}/history",
+    operation_id = "getScriptHistory",
+    tag = "scripts",
+    params(
+        ("script_hash" = String, Path, description = "32-byte script hash as hex"),
+        PageQuery
+    ),
+    responses(
+        (status = 200, description = "Coverage-limited script history", body = ScriptHistoryPage),
+        (status = 400, description = "Invalid script hash or cursor", body = ApiError)
+    )
+)]
+async fn get_script_history(
+    State(state): State<ApiState>,
+    Path(script_hash): Path<String>,
+    Query(query): Query<PageQuery>,
+) -> Result<Json<ScriptHistoryPage>, ApiError> {
+    let store = state
+        .store
+        .as_deref()
+        .ok_or_else(|| ApiError::not_found("script history not found"))?;
+    let script_hash = parse_hash(&script_hash)?;
+    let cursor = decode_cursor(query.cursor.as_deref())?;
+    let limit = query.limit.unwrap_or(25);
+    if !(1..=100).contains(&limit) {
+        return Err(ApiError::bad_request("limit must be between 1 and 100"));
+    }
+    let page = store
+        .address_history(&script_hash, cursor.as_deref(), limit as usize)
+        .map_err(store_error)?;
+
+    Ok(Json(ScriptHistoryPage {
+        items: page.items.into_iter().map(script_history_event).collect(),
+        next_cursor: page.next_cursor.map(hex::encode),
+        indexed_context: indexed_context(store)?,
+    }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/scripts/{script_hash}/utxos",
+    operation_id = "getScriptUtxos",
+    tag = "scripts",
+    params(
+        ("script_hash" = String, Path, description = "32-byte script hash as hex"),
+        PageQuery
+    ),
+    responses(
+        (status = 200, description = "Coverage-limited script UTXOs", body = ScriptUtxoPage),
+        (status = 400, description = "Invalid script hash or cursor", body = ApiError)
+    )
+)]
+async fn get_script_utxos(
+    State(state): State<ApiState>,
+    Path(script_hash): Path<String>,
+    Query(query): Query<PageQuery>,
+) -> Result<Json<ScriptUtxoPage>, ApiError> {
+    let store = state
+        .store
+        .as_deref()
+        .ok_or_else(|| ApiError::not_found("script utxos not found"))?;
+    let script_hash = parse_hash(&script_hash)?;
+    let cursor = decode_cursor(query.cursor.as_deref())?;
+    let limit = query.limit.unwrap_or(25);
+    if !(1..=100).contains(&limit) {
+        return Err(ApiError::bad_request("limit must be between 1 and 100"));
+    }
+    let page = store
+        .address_utxos(&script_hash, cursor.as_deref(), limit as usize)
+        .map_err(store_error)?;
+
+    Ok(Json(ScriptUtxoPage {
+        items: page.items.into_iter().map(script_utxo).collect(),
+        next_cursor: page.next_cursor.map(hex::encode),
+        indexed_context: indexed_context(store)?,
+    }))
 }
 
 #[utoipa::path(
@@ -539,6 +635,28 @@ fn transaction_detail(detail: TxDetailRecordV1) -> TransactionDetail {
                 script_public_key_address: output.script_public_key_address,
             })
             .collect(),
+    }
+}
+
+fn script_history_event(event: AddressHistoryRecord) -> ScriptHistoryEvent {
+    ScriptHistoryEvent {
+        script_hash: hex::encode(event.script_hash),
+        daa_score: event.daa_score.to_string(),
+        txid: hex::encode(event.txid),
+        event_index: event.event_index,
+        amount: event.amount.to_string(),
+        balance_trust_level: "coverage_limited".to_owned(),
+    }
+}
+
+fn script_utxo(utxo: AddressUtxoRecord) -> ScriptUtxo {
+    ScriptUtxo {
+        script_hash: hex::encode(utxo.script_hash),
+        txid: hex::encode(utxo.txid),
+        output_index: utxo.output_index,
+        amount: utxo.amount.to_string(),
+        created_daa_score: utxo.created_daa_score.to_string(),
+        balance_trust_level: "coverage_limited".to_owned(),
     }
 }
 

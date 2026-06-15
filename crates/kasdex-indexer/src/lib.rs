@@ -3,11 +3,13 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+use kasdex_core::script_hash_from_hex;
 use kasdex_node::{GrpcKaspaNode, NodeError, protowire};
 use kasdex_store::{
-    BlockEffectRecordV1, BlockSummaryRecord, ChainStore, Checkpoint, CoverageClass,
-    CoverageRangeRecord, StoreError, TxDetailRecordV1, TxInputRecordV1, TxOutputRecordV1,
-    TxSummaryRecord,
+    AddressHistoryRecord, AddressUtxoRecord, BlockEffectRecordV1, BlockSummaryRecord, ChainStore,
+    Checkpoint, CoverageClass, CoverageRangeRecord, IndexedBlockWrite, OutpointRef,
+    OutpointStateRecord, StoreError, TxDetailRecordV1, TxInputRecordV1, TxOutputRecordV1,
+    TxSummaryRecord, UnresolvedSpendRecord,
 };
 
 const DEFAULT_COVERAGE_RANGE_ID: &str = "default";
@@ -248,6 +250,7 @@ pub struct BackfillConfig {
     pub rpc_url: String,
     pub limit_blocks: usize,
     pub start_hash: Option<String>,
+    pub index_addresses: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -342,6 +345,12 @@ pub async fn run_bounded_backfill<S: ChainStore>(
 
         let mut tx_records = Vec::new();
         let mut tx_detail_records = Vec::new();
+        let mut address_history = Vec::new();
+        let mut address_utxos = Vec::new();
+        let mut spent_address_utxos = Vec::new();
+        let mut outpoint_states = Vec::new();
+        let mut unresolved_spends = Vec::new();
+        let mut spent_outpoints = Vec::new();
         for tx in block.transactions {
             if let Some(verbose) = tx.verbose_data.as_ref() {
                 let txid = parse_hash(&verbose.transaction_id)?;
@@ -359,6 +368,15 @@ pub async fn run_bounded_backfill<S: ChainStore>(
                     header.daa_score,
                     header.timestamp,
                 )?);
+                if config.index_addresses {
+                    let derived = address_index_records(store, &tx, txid, header.daa_score)?;
+                    address_history.extend(derived.address_history);
+                    address_utxos.extend(derived.address_utxos);
+                    spent_address_utxos.extend(derived.spent_address_utxos);
+                    outpoint_states.extend(derived.outpoint_states);
+                    unresolved_spends.extend(derived.unresolved_spends);
+                    spent_outpoints.extend(derived.spent_outpoints);
+                }
                 indexed_transactions += 1;
             }
         }
@@ -381,18 +399,29 @@ pub async fn run_bounded_backfill<S: ChainStore>(
                 .as_ref()
                 .map(|checkpoint| checkpoint.daa_score),
             inserted_txids: tx_records.iter().map(|tx| tx.txid).collect(),
-            created_outpoints: Vec::new(),
-            spent_outpoints: Vec::new(),
+            created_outpoints: outpoint_states
+                .iter()
+                .map(|outpoint| OutpointRef {
+                    txid: outpoint.txid,
+                    output_index: outpoint.output_index,
+                })
+                .collect(),
+            spent_outpoints,
             address_event_keys: Vec::new(),
         };
-        store.put_indexed_block(
-            &block_record,
-            &tx_records,
-            &tx_detail_records,
-            &effect,
-            &checkpoint,
-            &coverage,
-        )?;
+        store.put_indexed_block(IndexedBlockWrite {
+            block: &block_record,
+            txs: &tx_records,
+            tx_details: &tx_detail_records,
+            address_history: &address_history,
+            address_utxos: &address_utxos,
+            spent_address_utxos: &spent_address_utxos,
+            outpoint_states: &outpoint_states,
+            unresolved_spends: &unresolved_spends,
+            effect: &effect,
+            checkpoint: &checkpoint,
+            coverage: &coverage,
+        })?;
         checkpoint_daa_score = Some(header.daa_score);
         checkpoint_hash = Some(header.hash);
         current_checkpoint = Some(checkpoint);
@@ -571,6 +600,106 @@ fn tx_output_record(
         script_public_key_type,
         script_public_key_address,
     }
+}
+
+#[derive(Default)]
+struct AddressIndexRecords {
+    address_history: Vec<AddressHistoryRecord>,
+    address_utxos: Vec<AddressUtxoRecord>,
+    spent_address_utxos: Vec<AddressUtxoRecord>,
+    outpoint_states: Vec<OutpointStateRecord>,
+    unresolved_spends: Vec<UnresolvedSpendRecord>,
+    spent_outpoints: Vec<OutpointRef>,
+}
+
+fn address_index_records<S: ChainStore>(
+    store: &S,
+    tx: &protowire::RpcTransaction,
+    txid: [u8; 32],
+    daa_score: u64,
+) -> IndexerResult<AddressIndexRecords> {
+    let mut records = AddressIndexRecords::default();
+    let mut event_index = 0_u16;
+
+    for (output_index, output) in tx.outputs.iter().enumerate() {
+        let Some(script) = output.script_public_key.as_ref() else {
+            continue;
+        };
+        let script_hash = script_hash_from_hex(&script.script_public_key);
+        let address = output
+            .verbose_data
+            .as_ref()
+            .and_then(|verbose| non_empty_string(&verbose.script_public_key_address));
+        records.address_history.push(AddressHistoryRecord {
+            script_hash,
+            daa_score,
+            txid,
+            event_index,
+            amount: output.amount.min(i64::MAX as u64) as i64,
+        });
+        records.address_utxos.push(AddressUtxoRecord {
+            script_hash,
+            txid,
+            output_index: output_index as u32,
+            amount: output.amount,
+            created_daa_score: daa_score,
+        });
+        records.outpoint_states.push(OutpointStateRecord {
+            txid,
+            output_index: output_index as u32,
+            amount: output.amount,
+            script_hash,
+            address,
+            created_daa_score: daa_score,
+            spent_by: None,
+            spent_daa_score: None,
+        });
+        event_index = event_index.saturating_add(1);
+    }
+
+    for input in &tx.inputs {
+        let Some(previous) = input.previous_outpoint.as_ref() else {
+            continue;
+        };
+        let Some(previous_txid) = parse_optional_hash(&previous.transaction_id)? else {
+            continue;
+        };
+
+        match store.outpoint_state(&previous_txid, previous.index)? {
+            Some(mut outpoint) if outpoint.spent_by.is_none() => {
+                outpoint.spent_by = Some(txid);
+                outpoint.spent_daa_score = Some(daa_score);
+                records.address_history.push(AddressHistoryRecord {
+                    script_hash: outpoint.script_hash,
+                    daa_score,
+                    txid,
+                    event_index,
+                    amount: -(outpoint.amount.min(i64::MAX as u64) as i64),
+                });
+                records.spent_address_utxos.push(AddressUtxoRecord {
+                    script_hash: outpoint.script_hash,
+                    txid: outpoint.txid,
+                    output_index: outpoint.output_index,
+                    amount: outpoint.amount,
+                    created_daa_score: outpoint.created_daa_score,
+                });
+                records.spent_outpoints.push(OutpointRef {
+                    txid: previous_txid,
+                    output_index: previous.index,
+                });
+                records.outpoint_states.push(outpoint);
+                event_index = event_index.saturating_add(1);
+            }
+            _ => records.unresolved_spends.push(UnresolvedSpendRecord {
+                previous_txid,
+                previous_output_index: previous.index,
+                spending_txid: txid,
+                spending_daa_score: daa_score,
+            }),
+        }
+    }
+
+    Ok(records)
 }
 
 fn non_empty_string(value: &str) -> Option<String> {

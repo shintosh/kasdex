@@ -43,6 +43,8 @@ enum Command {
         index_stale_after_secs: u64,
         #[arg(long, default_value_t = 60)]
         index_poll_timeout_secs: u64,
+        #[arg(long)]
+        index_addresses: bool,
     },
     Openapi {
         #[arg(long)]
@@ -65,6 +67,8 @@ enum Command {
         follow: bool,
         #[arg(long, default_value_t = 5)]
         interval_secs: u64,
+        #[arg(long)]
+        address_indexing: bool,
     },
 }
 
@@ -94,6 +98,7 @@ async fn main() -> anyhow::Result<()> {
             index_stalled_after_secs,
             index_stale_after_secs,
             index_poll_timeout_secs,
+            index_addresses,
         } => {
             serve(ServeConfig {
                 listen,
@@ -108,6 +113,7 @@ async fn main() -> anyhow::Result<()> {
                 index_stalled_after_secs,
                 index_stale_after_secs,
                 index_poll_timeout_secs,
+                index_addresses,
             })
             .await
         }
@@ -122,6 +128,7 @@ async fn main() -> anyhow::Result<()> {
             start_hash,
             follow,
             interval_secs,
+            address_indexing,
         } => {
             index(
                 rpc_url,
@@ -130,6 +137,7 @@ async fn main() -> anyhow::Result<()> {
                 start_hash,
                 follow,
                 interval_secs,
+                address_indexing,
             )
             .await
         }
@@ -150,6 +158,7 @@ struct ServeConfig {
     index_stalled_after_secs: u64,
     index_stale_after_secs: u64,
     index_poll_timeout_secs: u64,
+    index_addresses: bool,
 }
 
 async fn serve(config: ServeConfig) -> anyhow::Result<()> {
@@ -175,6 +184,7 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
             config.index_limit_blocks,
             config.index_interval_secs,
             config.index_poll_timeout_secs,
+            config.index_addresses,
         );
     }
 
@@ -220,6 +230,7 @@ fn spawn_indexer(
     limit_blocks: usize,
     interval_secs: u64,
     poll_timeout_secs: u64,
+    index_addresses: bool,
 ) {
     tokio::spawn(async move {
         loop {
@@ -238,6 +249,7 @@ fn spawn_indexer(
                             rpc_url: poll_rpc_url,
                             limit_blocks,
                             start_hash: None,
+                            index_addresses,
                         },
                     ),
                 )
@@ -330,6 +342,7 @@ async fn index(
     start_hash: Option<String>,
     follow: bool,
     interval_secs: u64,
+    address_indexing: bool,
 ) -> anyhow::Result<()> {
     let store = kasdex_store_rocks::RocksStore::open(&data_dir)?;
     let mut configured_start_hash = start_hash;
@@ -341,6 +354,7 @@ async fn index(
                 rpc_url: rpc_url.clone(),
                 limit_blocks,
                 start_hash: configured_start_hash.take(),
+                index_addresses: address_indexing,
             },
         )
         .await?;

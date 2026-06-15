@@ -113,6 +113,40 @@ pub struct TransactionOutput {
     pub script_public_key_address: Option<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+pub struct ScriptHistoryEvent {
+    pub script_hash: String,
+    pub daa_score: String,
+    pub txid: String,
+    pub event_index: u16,
+    pub amount: String,
+    pub balance_trust_level: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+pub struct ScriptUtxo {
+    pub script_hash: String,
+    pub txid: String,
+    pub output_index: u32,
+    pub amount: String,
+    pub created_daa_score: String,
+    pub balance_trust_level: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+pub struct ScriptHistoryPage {
+    pub items: Vec<ScriptHistoryEvent>,
+    pub next_cursor: Option<String>,
+    pub indexed_context: IndexedContext,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+pub struct ScriptUtxoPage {
+    pub items: Vec<ScriptUtxo>,
+    pub next_cursor: Option<String>,
+    pub indexed_context: IndexedContext,
+}
+
 #[derive(Clone, Debug, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct PageQuery {

@@ -68,6 +68,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/scripts/{script_hash}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getScriptHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/scripts/{script_hash}/utxos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getScriptUtxos"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/search": {
         parameters: {
             query?: never;
@@ -178,6 +210,34 @@ export interface components {
         Page: {
             indexed_context: components["schemas"]["IndexedContext"];
             items: components["schemas"]["BlockSummary"][];
+            next_cursor?: string | null;
+        };
+        ScriptHistoryEvent: {
+            amount: string;
+            balance_trust_level: string;
+            daa_score: string;
+            /** Format: int32 */
+            event_index: number;
+            script_hash: string;
+            txid: string;
+        };
+        ScriptHistoryPage: {
+            indexed_context: components["schemas"]["IndexedContext"];
+            items: components["schemas"]["ScriptHistoryEvent"][];
+            next_cursor?: string | null;
+        };
+        ScriptUtxo: {
+            amount: string;
+            balance_trust_level: string;
+            created_daa_score: string;
+            /** Format: int32 */
+            output_index: number;
+            script_hash: string;
+            txid: string;
+        };
+        ScriptUtxoPage: {
+            indexed_context: components["schemas"]["IndexedContext"];
+            items: components["schemas"]["ScriptUtxo"][];
             next_cursor?: string | null;
         };
         SearchResponse: {
@@ -363,6 +423,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IndexerStatusResponse"];
+                };
+            };
+        };
+    };
+    getScriptHistory: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description 32-byte script hash as hex */
+                script_hash: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Coverage-limited script history */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScriptHistoryPage"];
+                };
+            };
+            /** @description Invalid script hash or cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    getScriptUtxos: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description 32-byte script hash as hex */
+                script_hash: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Coverage-limited script UTXOs */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScriptUtxoPage"];
+                };
+            };
+            /** @description Invalid script hash or cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
                 };
             };
         };

@@ -147,9 +147,43 @@ pub struct AddressUtxoRecord {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct OutpointStateRecord {
+    pub txid: [u8; 32],
+    pub output_index: u32,
+    pub amount: u64,
+    pub script_hash: [u8; 32],
+    pub address: Option<String>,
+    pub created_daa_score: u64,
+    pub spent_by: Option<[u8; 32]>,
+    pub spent_daa_score: Option<u64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct UnresolvedSpendRecord {
+    pub previous_txid: [u8; 32],
+    pub previous_output_index: u32,
+    pub spending_txid: [u8; 32],
+    pub spending_daa_score: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Page<T> {
     pub items: Vec<T>,
     pub next_cursor: Option<Vec<u8>>,
+}
+
+pub struct IndexedBlockWrite<'a> {
+    pub block: &'a BlockSummaryRecord,
+    pub txs: &'a [TxSummaryRecord],
+    pub tx_details: &'a [TxDetailRecordV1],
+    pub address_history: &'a [AddressHistoryRecord],
+    pub address_utxos: &'a [AddressUtxoRecord],
+    pub spent_address_utxos: &'a [AddressUtxoRecord],
+    pub outpoint_states: &'a [OutpointStateRecord],
+    pub unresolved_spends: &'a [UnresolvedSpendRecord],
+    pub effect: &'a BlockEffectRecordV1,
+    pub checkpoint: &'a Checkpoint,
+    pub coverage: &'a CoverageRangeRecord,
 }
 
 pub trait ChainStore: Send + Sync {
@@ -161,15 +195,7 @@ pub trait ChainStore: Send + Sync {
     fn put_coverage_range(&self, coverage: &CoverageRangeRecord) -> StoreResult<()>;
 
     fn put_block(&self, block: &BlockSummaryRecord) -> StoreResult<()>;
-    fn put_indexed_block(
-        &self,
-        block: &BlockSummaryRecord,
-        txs: &[TxSummaryRecord],
-        tx_details: &[TxDetailRecordV1],
-        effect: &BlockEffectRecordV1,
-        checkpoint: &Checkpoint,
-        coverage: &CoverageRangeRecord,
-    ) -> StoreResult<()>;
+    fn put_indexed_block(&self, write: IndexedBlockWrite<'_>) -> StoreResult<()>;
     fn block_effect_by_hash(&self, hash: &[u8; 32]) -> StoreResult<Option<BlockEffectRecordV1>>;
     fn block_by_hash(&self, hash: &[u8; 32]) -> StoreResult<Option<BlockSummaryRecord>>;
     fn blocks_by_score(
@@ -209,6 +235,14 @@ pub trait ChainStore: Send + Sync {
         cursor: Option<&[u8]>,
         limit: usize,
     ) -> StoreResult<Page<AddressUtxoRecord>>;
+
+    fn put_outpoint_state(&self, outpoint: &OutpointStateRecord) -> StoreResult<()>;
+    fn outpoint_state(
+        &self,
+        txid: &[u8; 32],
+        output_index: u32,
+    ) -> StoreResult<Option<OutpointStateRecord>>;
+    fn put_unresolved_spend(&self, spend: &UnresolvedSpendRecord) -> StoreResult<()>;
 }
 
 impl<T> ChainStore for Arc<T>
@@ -243,17 +277,8 @@ where
         self.as_ref().put_block(block)
     }
 
-    fn put_indexed_block(
-        &self,
-        block: &BlockSummaryRecord,
-        txs: &[TxSummaryRecord],
-        tx_details: &[TxDetailRecordV1],
-        effect: &BlockEffectRecordV1,
-        checkpoint: &Checkpoint,
-        coverage: &CoverageRangeRecord,
-    ) -> StoreResult<()> {
-        self.as_ref()
-            .put_indexed_block(block, txs, tx_details, effect, checkpoint, coverage)
+    fn put_indexed_block(&self, write: IndexedBlockWrite<'_>) -> StoreResult<()> {
+        self.as_ref().put_indexed_block(write)
     }
 
     fn block_effect_by_hash(&self, hash: &[u8; 32]) -> StoreResult<Option<BlockEffectRecordV1>> {
@@ -330,5 +355,21 @@ where
         limit: usize,
     ) -> StoreResult<Page<AddressUtxoRecord>> {
         self.as_ref().address_utxos(script_hash, cursor, limit)
+    }
+
+    fn put_outpoint_state(&self, outpoint: &OutpointStateRecord) -> StoreResult<()> {
+        self.as_ref().put_outpoint_state(outpoint)
+    }
+
+    fn outpoint_state(
+        &self,
+        txid: &[u8; 32],
+        output_index: u32,
+    ) -> StoreResult<Option<OutpointStateRecord>> {
+        self.as_ref().outpoint_state(txid, output_index)
+    }
+
+    fn put_unresolved_spend(&self, spend: &UnresolvedSpendRecord) -> StoreResult<()> {
+        self.as_ref().put_unresolved_spend(spend)
     }
 }

@@ -28,3 +28,20 @@ impl IndexedContext {
         }
     }
 }
+
+pub fn script_hash_from_hex(script_public_key: &str) -> [u8; 32] {
+    let script_bytes =
+        hex::decode(script_public_key).unwrap_or_else(|_| script_public_key.as_bytes().to_vec());
+    *blake3::hash(&script_bytes).as_bytes()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn script_hash_is_stable_for_hex_scripts() {
+        assert_eq!(script_hash_from_hex("51"), script_hash_from_hex("51"));
+        assert_ne!(script_hash_from_hex("51"), script_hash_from_hex("52"));
+    }
+}
