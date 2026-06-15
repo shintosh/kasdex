@@ -28,6 +28,7 @@ const STORE_METADATA_KEY: &[u8] = b"store_metadata";
 const INDEXER_STATS_KEY: &[u8] = b"indexer_stats";
 const STORE_SCHEMA_VERSION: u16 = 1;
 const KEY_LAYOUT_VERSION: u16 = 1;
+const INDEXER_STATS_SCHEMA_VERSION: u16 = 2;
 
 pub fn backend_name() -> &'static str {
     "rocksdb"
@@ -165,6 +166,7 @@ impl ChainStore for RocksStore {
         let meta_cf = self.cf(META)?;
         let coverage_cf = self.cf(COVERAGE_RANGES)?;
 
+        let block_already_indexed = self.block_by_hash(&write.block.hash)?.is_some();
         let mut batch = rocksdb::WriteBatch::default();
         let mut put_operations = 0_u64;
         let mut delete_operations = 0_u64;
@@ -238,14 +240,18 @@ impl ChainStore for RocksStore {
             encode(write.coverage)?,
         );
         put_operations += 1;
-        let mut stats = self.indexer_stats()?.unwrap_or(IndexerStatsRecord {
-            schema_version: 1,
-            ..IndexerStatsRecord::default()
-        });
-        stats.total_indexed_blocks = stats.total_indexed_blocks.saturating_add(1);
-        stats.total_indexed_transactions = stats
-            .total_indexed_transactions
-            .saturating_add(write.txs.len() as u64);
+        put_operations += 1; // indexer_stats metadata record
+        let mut stats =
+            normalize_indexer_stats(self.indexer_stats()?.unwrap_or(IndexerStatsRecord {
+                schema_version: INDEXER_STATS_SCHEMA_VERSION,
+                ..IndexerStatsRecord::default()
+            }));
+        if !block_already_indexed {
+            stats.total_indexed_blocks = stats.total_indexed_blocks.saturating_add(1);
+            stats.total_indexed_transactions = stats
+                .total_indexed_transactions
+                .saturating_add(write.txs.len() as u64);
+        }
         stats.total_write_batches = stats.total_write_batches.saturating_add(1);
         stats.total_put_operations = stats.total_put_operations.saturating_add(put_operations);
         stats.total_delete_operations = stats
@@ -253,8 +259,12 @@ impl ChainStore for RocksStore {
             .saturating_add(delete_operations);
         stats.last_batch_put_operations = put_operations;
         stats.last_batch_delete_operations = delete_operations;
-        stats.last_batch_blocks = 1;
-        stats.last_batch_transactions = write.txs.len() as u64;
+        stats.last_batch_blocks = u64::from(!block_already_indexed);
+        stats.last_batch_transactions = if block_already_indexed {
+            0
+        } else {
+            write.txs.len() as u64
+        };
         stats.last_updated_daa_score = Some(write.block.daa_score);
         stats.last_updated_block_hash = Some(write.block.hash);
         batch.put_cf(&meta_cf, INDEXER_STATS_KEY, encode(&stats)?);
@@ -442,6 +452,18 @@ fn decode<T: DeserializeOwned>(bytes: &[u8]) -> StoreResult<T> {
 
 fn rocks_err(err: rocksdb::Error) -> StoreError {
     StoreError::Backend(err.to_string())
+}
+
+fn normalize_indexer_stats(mut stats: IndexerStatsRecord) -> IndexerStatsRecord {
+    if stats.schema_version < INDEXER_STATS_SCHEMA_VERSION {
+        if stats.schema_version == 1 {
+            stats.total_put_operations = stats
+                .total_put_operations
+                .saturating_add(stats.total_write_batches);
+        }
+        stats.schema_version = INDEXER_STATS_SCHEMA_VERSION;
+    }
+    stats
 }
 
 fn block_score_key(blue_score: u64, hash: &[u8; 32]) -> [u8; 40] {
@@ -883,18 +905,207 @@ mod tests {
         assert_eq!(
             store.indexer_stats().unwrap(),
             Some(IndexerStatsRecord {
-                schema_version: 1,
+                schema_version: 2,
                 total_indexed_blocks: 1,
                 total_indexed_transactions: 1,
                 total_write_batches: 1,
-                total_put_operations: 10,
+                total_put_operations: 11,
                 total_delete_operations: 0,
-                last_batch_put_operations: 10,
+                last_batch_put_operations: 11,
                 last_batch_delete_operations: 0,
                 last_batch_blocks: 1,
                 last_batch_transactions: 1,
                 last_updated_daa_score: Some(11),
                 last_updated_block_hash: Some(bytes(10)),
+            })
+        );
+    }
+
+    #[test]
+    fn indexed_block_stats_do_not_double_count_duplicate_blocks() {
+        let (_dir, store) = test_store();
+        let block = BlockSummaryRecord {
+            hash: bytes(20),
+            blue_score: 20,
+            daa_score: 21,
+            timestamp_ms: 22,
+            tx_count: 1,
+        };
+        let tx = TxSummaryRecord {
+            txid: bytes(21),
+            accepting_block_hash: Some(block.hash),
+            input_count: 0,
+            output_count: 1,
+        };
+        let detail = TxDetailRecordV1 {
+            schema_version: 1,
+            detail_available: true,
+            detail_complete: false,
+            txid: tx.txid,
+            accepting_block_hash: block.hash,
+            accepting_daa_score: block.daa_score,
+            accepting_timestamp_ms: block.timestamp_ms,
+            version: 1,
+            lock_time: 0,
+            subnetwork_id: String::new(),
+            gas: 0,
+            payload: String::new(),
+            mass: 0,
+            storage_mass: 0,
+            compute_mass: 0,
+            block_time: 0,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+        };
+        let effect = BlockEffectRecordV1 {
+            schema_version: 1,
+            block_hash: block.hash,
+            daa_score: block.daa_score,
+            previous_checkpoint_hash: None,
+            previous_checkpoint_daa_score: None,
+            inserted_txids: vec![tx.txid],
+            created_outpoints: Vec::new(),
+            spent_outpoints: Vec::new(),
+            address_event_keys: Vec::new(),
+        };
+        let checkpoint = Checkpoint {
+            network: "kaspa-mainnet".to_owned(),
+            daa_score: block.daa_score,
+            block_hash: block.hash,
+        };
+        let coverage = CoverageRangeRecord {
+            schema_version: 1,
+            range_id: "default".to_owned(),
+            start_hash: block.hash,
+            start_daa_score: Some(block.daa_score),
+            end_hash: block.hash,
+            end_daa_score: block.daa_score,
+            source: "kaspa-mainnet".to_owned(),
+            coverage_class: CoverageClass::PrunedWindow,
+        };
+
+        for _ in 0..2 {
+            store
+                .put_indexed_block(IndexedBlockWrite {
+                    block: &block,
+                    txs: std::slice::from_ref(&tx),
+                    tx_details: std::slice::from_ref(&detail),
+                    address_history: &[],
+                    address_utxos: &[],
+                    spent_address_utxos: &[],
+                    outpoint_states: &[],
+                    unresolved_spends: &[],
+                    effect: &effect,
+                    checkpoint: &checkpoint,
+                    coverage: &coverage,
+                })
+                .unwrap();
+        }
+
+        assert_eq!(
+            store.indexer_stats().unwrap(),
+            Some(IndexerStatsRecord {
+                schema_version: 2,
+                total_indexed_blocks: 1,
+                total_indexed_transactions: 1,
+                total_write_batches: 2,
+                total_put_operations: 16,
+                total_delete_operations: 0,
+                last_batch_put_operations: 8,
+                last_batch_delete_operations: 0,
+                last_batch_blocks: 0,
+                last_batch_transactions: 0,
+                last_updated_daa_score: Some(21),
+                last_updated_block_hash: Some(bytes(20)),
+            })
+        );
+    }
+
+    #[test]
+    fn migrates_v1_indexer_stats_to_include_stats_metadata_puts() {
+        let (_dir, store) = test_store();
+        store
+            .put_indexer_stats(&IndexerStatsRecord {
+                schema_version: 1,
+                total_indexed_blocks: 5,
+                total_indexed_transactions: 50,
+                total_write_batches: 5,
+                total_put_operations: 100,
+                total_delete_operations: 3,
+                last_batch_put_operations: 20,
+                last_batch_delete_operations: 1,
+                last_batch_blocks: 1,
+                last_batch_transactions: 10,
+                last_updated_daa_score: Some(99),
+                last_updated_block_hash: Some(bytes(99)),
+            })
+            .unwrap();
+
+        let block = BlockSummaryRecord {
+            hash: bytes(30),
+            blue_score: 30,
+            daa_score: 31,
+            timestamp_ms: 32,
+            tx_count: 0,
+        };
+        let effect = BlockEffectRecordV1 {
+            schema_version: 1,
+            block_hash: block.hash,
+            daa_score: block.daa_score,
+            previous_checkpoint_hash: None,
+            previous_checkpoint_daa_score: None,
+            inserted_txids: Vec::new(),
+            created_outpoints: Vec::new(),
+            spent_outpoints: Vec::new(),
+            address_event_keys: Vec::new(),
+        };
+        let checkpoint = Checkpoint {
+            network: "kaspa-mainnet".to_owned(),
+            daa_score: block.daa_score,
+            block_hash: block.hash,
+        };
+        let coverage = CoverageRangeRecord {
+            schema_version: 1,
+            range_id: "default".to_owned(),
+            start_hash: block.hash,
+            start_daa_score: Some(block.daa_score),
+            end_hash: block.hash,
+            end_daa_score: block.daa_score,
+            source: "kaspa-mainnet".to_owned(),
+            coverage_class: CoverageClass::PrunedWindow,
+        };
+
+        store
+            .put_indexed_block(IndexedBlockWrite {
+                block: &block,
+                txs: &[],
+                tx_details: &[],
+                address_history: &[],
+                address_utxos: &[],
+                spent_address_utxos: &[],
+                outpoint_states: &[],
+                unresolved_spends: &[],
+                effect: &effect,
+                checkpoint: &checkpoint,
+                coverage: &coverage,
+            })
+            .unwrap();
+
+        assert_eq!(
+            store.indexer_stats().unwrap(),
+            Some(IndexerStatsRecord {
+                schema_version: 2,
+                total_indexed_blocks: 6,
+                total_indexed_transactions: 50,
+                total_write_batches: 6,
+                total_put_operations: 111,
+                total_delete_operations: 3,
+                last_batch_put_operations: 6,
+                last_batch_delete_operations: 0,
+                last_batch_blocks: 1,
+                last_batch_transactions: 0,
+                last_updated_daa_score: Some(31),
+                last_updated_block_hash: Some(bytes(30)),
             })
         );
     }
