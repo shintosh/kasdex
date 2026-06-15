@@ -12,7 +12,10 @@ pub use dto::*;
 pub use error::ApiError;
 use kasdex_core::IndexedContext;
 use kasdex_indexer::{IndexerRuntimeStatus, IndexerStatusHandle};
-use kasdex_store::{BlockSummaryRecord, ChainStore, StoreError, TxDetailRecordV1, TxSummaryRecord};
+use kasdex_store::{
+    BlockSummaryRecord, ChainStore, CoverageClass, CoverageRangeRecord, StoreError,
+    TxDetailRecordV1, TxSummaryRecord,
+};
 use tower_http::trace::TraceLayer;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
@@ -25,6 +28,7 @@ use utoipa_swagger_ui::SwaggerUi;
         BlockDetail,
         BlockPage,
         BlockSummary,
+        CoverageRange,
         HealthResponse,
         IndexerStatusResponse,
         SearchResponse,
@@ -162,15 +166,25 @@ async fn indexer_status(
             last_poll_duration_ms: None,
             last_blocks_per_second: None,
             last_transactions_per_second: None,
+            coverage: None,
+            coverage_evaluation: "unknown".to_owned(),
         }));
     };
 
     let checkpoint = store.checkpoint().map_err(store_error)?;
+    let coverage = store
+        .coverage_range("default")
+        .map_err(store_error)?
+        .map(coverage_range);
     let runtime = state
         .indexer_status
         .as_ref()
         .map(IndexerStatusHandle::snapshot);
-    Ok(Json(indexer_status_response(checkpoint, runtime.as_ref())))
+    Ok(Json(indexer_status_response(
+        checkpoint,
+        runtime.as_ref(),
+        coverage,
+    )))
 }
 
 #[utoipa::path(
@@ -336,6 +350,7 @@ fn indexed_context(store: &dyn ChainStore) -> Result<IndexedContext, ApiError> {
 fn indexer_status_response(
     checkpoint: Option<kasdex_store::Checkpoint>,
     runtime: Option<&IndexerRuntimeStatus>,
+    coverage: Option<CoverageRange>,
 ) -> IndexerStatusResponse {
     let now = std::time::SystemTime::now();
     let state = runtime
@@ -399,6 +414,8 @@ fn indexer_status_response(
         last_blocks_per_second: runtime.and_then(|runtime| runtime.last_blocks_per_second),
         last_transactions_per_second: runtime
             .and_then(|runtime| runtime.last_transactions_per_second),
+        coverage,
+        coverage_evaluation: "unknown".to_owned(),
     }
 }
 
@@ -482,6 +499,27 @@ fn transaction_detail(detail: TxDetailRecordV1) -> TransactionDetail {
                 script_public_key_address: output.script_public_key_address,
             })
             .collect(),
+    }
+}
+
+fn coverage_range(coverage: CoverageRangeRecord) -> CoverageRange {
+    CoverageRange {
+        range_id: coverage.range_id,
+        start_hash: hex::encode(coverage.start_hash),
+        start_daa_score: coverage.start_daa_score.map(|score| score.to_string()),
+        end_hash: hex::encode(coverage.end_hash),
+        end_daa_score: coverage.end_daa_score.to_string(),
+        source: coverage.source,
+        coverage_class: coverage_class(&coverage.coverage_class).to_owned(),
+    }
+}
+
+fn coverage_class(coverage_class: &CoverageClass) -> &'static str {
+    match coverage_class {
+        CoverageClass::PrunedWindow => "pruned_window",
+        CoverageClass::ArchivalVerified => "archival_verified",
+        CoverageClass::PartialBackfill => "partial_backfill",
+        CoverageClass::Unknown => "unknown",
     }
 }
 

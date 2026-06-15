@@ -125,6 +125,15 @@ export interface components {
             /** Format: int32 */
             tx_count: number;
         };
+        CoverageRange: {
+            coverage_class: string;
+            end_daa_score: string;
+            end_hash: string;
+            range_id: string;
+            source: string;
+            start_daa_score?: string | null;
+            start_hash: string;
+        };
         HealthResponse: {
             status: string;
             version: string;
@@ -137,6 +146,8 @@ export interface components {
             virtual_daa_score?: string | null;
         };
         IndexerStatusResponse: {
+            coverage?: null | components["schemas"]["CoverageRange"];
+            coverage_evaluation: string;
             indexed_block_hash?: string | null;
             indexed_score?: string | null;
             lag_blocks?: string | null;

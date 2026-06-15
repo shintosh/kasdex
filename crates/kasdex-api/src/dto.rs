@@ -31,6 +31,19 @@ pub struct IndexerStatusResponse {
     pub last_poll_duration_ms: Option<u64>,
     pub last_blocks_per_second: Option<f64>,
     pub last_transactions_per_second: Option<f64>,
+    pub coverage: Option<CoverageRange>,
+    pub coverage_evaluation: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+pub struct CoverageRange {
+    pub range_id: String,
+    pub start_hash: String,
+    pub start_daa_score: Option<String>,
+    pub end_hash: String,
+    pub end_daa_score: String,
+    pub source: String,
+    pub coverage_class: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]

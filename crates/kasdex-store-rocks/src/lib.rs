@@ -1,13 +1,14 @@
 use std::path::Path;
 
 use kasdex_store::{
-    AddressHistoryRecord, AddressUtxoRecord, BlockSummaryRecord, ChainStore, Checkpoint, Page,
-    StoreError, StoreResult, TxDetailRecordV1, TxSummaryRecord,
+    AddressHistoryRecord, AddressUtxoRecord, BlockSummaryRecord, ChainStore, Checkpoint,
+    CoverageRangeRecord, Page, StoreError, StoreResult, TxDetailRecordV1, TxSummaryRecord,
 };
 use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, DB, Direction, IteratorMode, Options};
 use serde::{Serialize, de::DeserializeOwned};
 
 const META: &str = "meta";
+const COVERAGE_RANGES: &str = "coverage_ranges";
 const BLOCKS_BY_HASH: &str = "blocks_by_hash";
 const BLOCKS_BY_SCORE: &str = "blocks_by_score";
 const TX_BY_ID: &str = "tx_by_id";
@@ -80,6 +81,14 @@ impl ChainStore for RocksStore {
 
     fn put_checkpoint(&self, checkpoint: &Checkpoint) -> StoreResult<()> {
         self.put_encoded(META, CHECKPOINT_KEY, checkpoint)
+    }
+
+    fn coverage_range(&self, range_id: &str) -> StoreResult<Option<CoverageRangeRecord>> {
+        self.get_decoded(COVERAGE_RANGES, range_id)
+    }
+
+    fn put_coverage_range(&self, coverage: &CoverageRangeRecord) -> StoreResult<()> {
+        self.put_encoded(COVERAGE_RANGES, &coverage.range_id, coverage)
     }
 
     fn put_block(&self, block: &BlockSummaryRecord) -> StoreResult<()> {
@@ -221,9 +230,10 @@ impl ChainStore for RocksStore {
     }
 }
 
-fn column_families() -> [&'static str; 11] {
+fn column_families() -> [&'static str; 12] {
     [
         META,
+        COVERAGE_RANGES,
         BLOCKS_BY_HASH,
         BLOCKS_BY_SCORE,
         TX_BY_ID,
@@ -309,7 +319,10 @@ fn page_prefix<T: DeserializeOwned>(
 
 #[cfg(test)]
 mod tests {
-    use kasdex_store::{ChainStore, TxDetailRecordV1, TxInputRecordV1, TxOutputRecordV1};
+    use kasdex_store::{
+        ChainStore, CoverageClass, CoverageRangeRecord, TxDetailRecordV1, TxInputRecordV1,
+        TxOutputRecordV1,
+    };
     use tempfile::TempDir;
 
     use super::*;
@@ -324,6 +337,22 @@ mod tests {
         };
         store.put_checkpoint(&checkpoint).unwrap();
         assert_eq!(store.checkpoint().unwrap(), Some(checkpoint));
+
+        let coverage = CoverageRangeRecord {
+            schema_version: 1,
+            range_id: "default".to_owned(),
+            start_hash: bytes(1),
+            start_daa_score: Some(42),
+            end_hash: bytes(2),
+            end_daa_score: 84,
+            source: "kaspa-mainnet".to_owned(),
+            coverage_class: CoverageClass::PrunedWindow,
+        };
+        store.put_coverage_range(&coverage).unwrap();
+        assert_eq!(
+            store.coverage_range(&coverage.range_id).unwrap(),
+            Some(coverage)
+        );
 
         let block = BlockSummaryRecord {
             hash: bytes(2),

@@ -5,9 +5,11 @@ use std::{
 
 use kasdex_node::{GrpcKaspaNode, NodeError, protowire};
 use kasdex_store::{
-    BlockSummaryRecord, ChainStore, Checkpoint, StoreError, TxDetailRecordV1, TxInputRecordV1,
-    TxOutputRecordV1, TxSummaryRecord,
+    BlockSummaryRecord, ChainStore, Checkpoint, CoverageClass, CoverageRangeRecord, StoreError,
+    TxDetailRecordV1, TxInputRecordV1, TxOutputRecordV1, TxSummaryRecord,
 };
+
+const DEFAULT_COVERAGE_RANGE_ID: &str = "default";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum IndexerState {
@@ -280,6 +282,15 @@ pub async fn run_bounded_backfill<S: ChainStore>(
     let mut node = GrpcKaspaNode::connect(config.rpc_url).await?;
     let dag = node.get_block_dag_info().await?;
     let stored_checkpoint = store.checkpoint()?;
+    let coverage_start_hash = stored_checkpoint
+        .as_ref()
+        .map(|_| dag.pruning_point_hash.clone())
+        .unwrap_or_else(|| {
+            config
+                .start_hash
+                .clone()
+                .unwrap_or_else(|| dag.pruning_point_hash.clone())
+        });
     let start_hash = select_start_hash(
         config.start_hash.as_deref(),
         stored_checkpoint
@@ -300,6 +311,14 @@ pub async fn run_bounded_backfill<S: ChainStore>(
     let mut indexed_transactions = 0_usize;
     let mut checkpoint_daa_score = None;
     let mut checkpoint_hash = None;
+    let mut coverage = initialize_coverage_range(
+        store,
+        &mut node,
+        &dag.network_name,
+        &coverage_start_hash,
+        stored_checkpoint.as_ref(),
+    )
+    .await?;
 
     for hash in block_hashes {
         let block_response = node.get_block(hash.clone(), true).await?;
@@ -346,6 +365,9 @@ pub async fn run_bounded_backfill<S: ChainStore>(
             daa_score: header.daa_score,
             block_hash,
         })?;
+        coverage.end_hash = block_hash;
+        coverage.end_daa_score = header.daa_score;
+        store.put_coverage_range(&coverage)?;
         checkpoint_daa_score = Some(header.daa_score);
         checkpoint_hash = Some(header.hash);
         indexed_blocks += 1;
@@ -361,6 +383,46 @@ pub async fn run_bounded_backfill<S: ChainStore>(
         checkpoint_daa_score,
         checkpoint_hash,
     })
+}
+
+async fn initialize_coverage_range<S: ChainStore>(
+    store: &S,
+    node: &mut GrpcKaspaNode,
+    network: &str,
+    coverage_start_hash: &str,
+    stored_checkpoint: Option<&Checkpoint>,
+) -> IndexerResult<CoverageRangeRecord> {
+    if let Some(coverage) = store.coverage_range(DEFAULT_COVERAGE_RANGE_ID)? {
+        return Ok(coverage);
+    }
+
+    let start_hash = parse_hash(coverage_start_hash)?;
+    let (start_daa_score, coverage_class) =
+        match coverage_start_daa_score(node, coverage_start_hash).await {
+            Some(start_daa_score) => (Some(start_daa_score), CoverageClass::PrunedWindow),
+            None => (None, CoverageClass::Unknown),
+        };
+    let (end_hash, end_daa_score) = stored_checkpoint
+        .map(|checkpoint| (checkpoint.block_hash, checkpoint.daa_score))
+        .unwrap_or((start_hash, start_daa_score.unwrap_or_default()));
+
+    let coverage = CoverageRangeRecord {
+        schema_version: 1,
+        range_id: DEFAULT_COVERAGE_RANGE_ID.to_owned(),
+        start_hash,
+        start_daa_score,
+        end_hash,
+        end_daa_score,
+        source: network.to_owned(),
+        coverage_class,
+    };
+    store.put_coverage_range(&coverage)?;
+    Ok(coverage)
+}
+
+async fn coverage_start_daa_score(node: &mut GrpcKaspaNode, hash: &str) -> Option<u64> {
+    let block = node.get_block(hash.to_owned(), false).await.ok()?.block?;
+    Some(block.header?.daa_score)
 }
 
 fn select_start_hash(

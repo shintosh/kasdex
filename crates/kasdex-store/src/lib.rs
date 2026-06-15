@@ -22,6 +22,27 @@ pub struct Checkpoint {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CoverageClass {
+    PrunedWindow,
+    ArchivalVerified,
+    PartialBackfill,
+    Unknown,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CoverageRangeRecord {
+    pub schema_version: u16,
+    pub range_id: String,
+    pub start_hash: [u8; 32],
+    pub start_daa_score: Option<u64>,
+    pub end_hash: [u8; 32],
+    pub end_daa_score: u64,
+    pub source: String,
+    pub coverage_class: CoverageClass,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct BlockSummaryRecord {
     pub hash: [u8; 32],
     pub blue_score: u64,
@@ -108,6 +129,8 @@ pub struct Page<T> {
 pub trait ChainStore: Send + Sync {
     fn checkpoint(&self) -> StoreResult<Option<Checkpoint>>;
     fn put_checkpoint(&self, checkpoint: &Checkpoint) -> StoreResult<()>;
+    fn coverage_range(&self, range_id: &str) -> StoreResult<Option<CoverageRangeRecord>>;
+    fn put_coverage_range(&self, coverage: &CoverageRangeRecord) -> StoreResult<()>;
 
     fn put_block(&self, block: &BlockSummaryRecord) -> StoreResult<()>;
     fn block_by_hash(&self, hash: &[u8; 32]) -> StoreResult<Option<BlockSummaryRecord>>;
@@ -160,6 +183,14 @@ where
 
     fn put_checkpoint(&self, checkpoint: &Checkpoint) -> StoreResult<()> {
         self.as_ref().put_checkpoint(checkpoint)
+    }
+
+    fn coverage_range(&self, range_id: &str) -> StoreResult<Option<CoverageRangeRecord>> {
+        self.as_ref().coverage_range(range_id)
+    }
+
+    fn put_coverage_range(&self, coverage: &CoverageRangeRecord) -> StoreResult<()> {
+        self.as_ref().put_coverage_range(coverage)
     }
 
     fn put_block(&self, block: &BlockSummaryRecord) -> StoreResult<()> {

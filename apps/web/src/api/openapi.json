@@ -325,6 +325,43 @@
           }
         }
       },
+      "CoverageRange": {
+        "type": "object",
+        "required": [
+          "range_id",
+          "start_hash",
+          "end_hash",
+          "end_daa_score",
+          "source",
+          "coverage_class"
+        ],
+        "properties": {
+          "coverage_class": {
+            "type": "string"
+          },
+          "end_daa_score": {
+            "type": "string"
+          },
+          "end_hash": {
+            "type": "string"
+          },
+          "range_id": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "start_daa_score": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "start_hash": {
+            "type": "string"
+          }
+        }
+      },
       "HealthResponse": {
         "type": "object",
         "required": [
@@ -376,9 +413,23 @@
         "required": [
           "state",
           "network",
-          "source"
+          "source",
+          "coverage_evaluation"
         ],
         "properties": {
+          "coverage": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CoverageRange"
+              }
+            ]
+          },
+          "coverage_evaluation": {
+            "type": "string"
+          },
           "indexed_block_hash": {
             "type": [
               "string",

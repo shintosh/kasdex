@@ -76,6 +76,18 @@ export function IndexerStatusPanel() {
           <dt>Source</dt>
           <dd>{status.data.source}</dd>
         </div>
+        <div>
+          <dt>Local indexed coverage</dt>
+          <dd>{formatCoverage(status.data.coverage)}</dd>
+        </div>
+        <div>
+          <dt>Coverage class</dt>
+          <dd>{status.data.coverage?.coverage_class ?? 'unknown'}</dd>
+        </div>
+        <div>
+          <dt>Coverage evaluation</dt>
+          <dd>{status.data.coverage_evaluation}</dd>
+        </div>
         {status.data.last_error ? (
           <div>
             <dt>Last error</dt>
@@ -120,4 +132,17 @@ function formatRate(value?: number | null) {
   }
 
   return value.toFixed(1);
+}
+
+function formatCoverage(
+  coverage?: {
+    end_daa_score: string;
+    start_daa_score?: null | string;
+  } | null,
+) {
+  if (!coverage) {
+    return 'unknown';
+  }
+
+  return `${coverage.start_daa_score ?? 'unknown'} to ${coverage.end_daa_score}`;
 }
