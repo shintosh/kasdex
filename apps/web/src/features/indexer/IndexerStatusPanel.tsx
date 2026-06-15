@@ -42,6 +42,10 @@ export function IndexerStatusPanel() {
           <dt>Indexed score</dt>
           <dd>{status.data.indexed_score ?? 'unknown'}</dd>
         </div>
+        <div>
+          <dt>Source</dt>
+          <dd>{status.data.source}</dd>
+        </div>
       </dl>
     </section>
   );

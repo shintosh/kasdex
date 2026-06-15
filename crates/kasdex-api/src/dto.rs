@@ -29,6 +29,23 @@ pub struct BlockSummary {
 
 pub type BlockPage = Page<BlockSummary>;
 
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+pub struct BlockDetail {
+    pub hash: String,
+    pub blue_score: String,
+    pub daa_score: String,
+    pub tx_count: u32,
+    pub timestamp: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+pub struct TransactionSummary {
+    pub txid: String,
+    pub accepting_block_hash: Option<String>,
+    pub input_count: u32,
+    pub output_count: u32,
+}
+
 #[derive(Clone, Debug, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct PageQuery {

@@ -61,6 +61,57 @@
         }
       }
     },
+    "/api/v1/blocks/{hash}": {
+      "get": {
+        "tags": [
+          "blocks"
+        ],
+        "operationId": "getBlock",
+        "parameters": [
+          {
+            "name": "hash",
+            "in": "path",
+            "description": "32-byte block hash as hex",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Block detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BlockDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid hash",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Block not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/health": {
       "get": {
         "tags": [
@@ -140,6 +191,57 @@
           }
         }
       }
+    },
+    "/api/v1/transactions/{txid}": {
+      "get": {
+        "tags": [
+          "transactions"
+        ],
+        "operationId": "getTransaction",
+        "parameters": [
+          {
+            "name": "txid",
+            "in": "path",
+            "description": "32-byte transaction id as hex",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Transaction summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransactionSummary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid transaction id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Transaction not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -162,6 +264,35 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "BlockDetail": {
+        "type": "object",
+        "required": [
+          "hash",
+          "blue_score",
+          "daa_score",
+          "tx_count",
+          "timestamp"
+        ],
+        "properties": {
+          "blue_score": {
+            "type": "string"
+          },
+          "daa_score": {
+            "type": "string"
+          },
+          "hash": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "tx_count": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           }
         }
       },
@@ -379,6 +510,35 @@
             }
           }
         ]
+      },
+      "TransactionSummary": {
+        "type": "object",
+        "required": [
+          "txid",
+          "input_count",
+          "output_count"
+        ],
+        "properties": {
+          "accepting_block_hash": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "input_count": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "output_count": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "txid": {
+            "type": "string"
+          }
+        }
       }
     }
   },

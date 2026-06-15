@@ -60,13 +60,18 @@ pub struct Page<T> {
     pub next_cursor: Option<Vec<u8>>,
 }
 
-pub trait ChainStore {
+pub trait ChainStore: Send + Sync {
     fn checkpoint(&self) -> StoreResult<Option<Checkpoint>>;
     fn put_checkpoint(&self, checkpoint: &Checkpoint) -> StoreResult<()>;
 
     fn put_block(&self, block: &BlockSummaryRecord) -> StoreResult<()>;
     fn block_by_hash(&self, hash: &[u8; 32]) -> StoreResult<Option<BlockSummaryRecord>>;
     fn blocks_by_score(
+        &self,
+        cursor: Option<&[u8]>,
+        limit: usize,
+    ) -> StoreResult<Page<BlockSummaryRecord>>;
+    fn recent_blocks(
         &self,
         cursor: Option<&[u8]>,
         limit: usize,

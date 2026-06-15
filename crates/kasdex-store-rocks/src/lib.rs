@@ -129,6 +129,36 @@ impl ChainStore for RocksStore {
         Ok(Page { items, next_cursor })
     }
 
+    fn recent_blocks(
+        &self,
+        cursor: Option<&[u8]>,
+        limit: usize,
+    ) -> StoreResult<Page<BlockSummaryRecord>> {
+        let cf = self.cf(BLOCKS_BY_SCORE)?;
+        let start = cursor.unwrap_or(&[0xff; 40]);
+        let mut items = Vec::with_capacity(limit);
+        let mut next_cursor = None;
+        let mut last_key = None;
+
+        for row in self
+            .db
+            .iterator_cf(&cf, IteratorMode::From(start, Direction::Reverse))
+        {
+            let (key, value) = row.map_err(rocks_err)?;
+            if cursor.is_some_and(|cursor| key.as_ref() == cursor) {
+                continue;
+            }
+            if items.len() == limit {
+                next_cursor = last_key;
+                break;
+            }
+            last_key = Some(key.to_vec());
+            items.push(decode(&value)?);
+        }
+
+        Ok(Page { items, next_cursor })
+    }
+
     fn put_tx(&self, tx: &TxSummaryRecord) -> StoreResult<()> {
         self.put_encoded(TX_BY_ID, tx.txid, tx)
     }
@@ -307,6 +337,40 @@ mod tests {
         };
         store.put_tx(&tx).unwrap();
         assert_eq!(store.tx_by_id(&tx.txid).unwrap(), Some(tx));
+    }
+
+    #[test]
+    fn pages_recent_blocks_descending_by_blue_score() {
+        let (_dir, store) = test_store();
+        for blue_score in [10, 12, 11] {
+            store
+                .put_block(&BlockSummaryRecord {
+                    hash: bytes(blue_score),
+                    blue_score,
+                    daa_score: blue_score + 100,
+                    timestamp_ms: blue_score as i64,
+                    tx_count: 0,
+                })
+                .unwrap();
+        }
+
+        let page = store.recent_blocks(None, 2).unwrap();
+        assert_eq!(
+            page.items
+                .iter()
+                .map(|item| item.blue_score)
+                .collect::<Vec<_>>(),
+            vec![12, 11]
+        );
+
+        let next = store.recent_blocks(page.next_cursor.as_deref(), 2).unwrap();
+        assert_eq!(
+            next.items
+                .iter()
+                .map(|item| item.blue_score)
+                .collect::<Vec<_>>(),
+            vec![10]
+        );
     }
 
     #[test]

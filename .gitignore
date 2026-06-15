@@ -16,6 +16,9 @@ target
 # Temporary agent files
 .harness/
 
+# Local runtime data
+.kasdex/
+
 # Rust
 /target/
 

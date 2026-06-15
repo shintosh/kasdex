@@ -103,21 +103,38 @@ a {
 }
 
 .block-list li {
-  align-items: center;
+  align-items: flex-start;
   border-top: 1px solid #edf1ed;
   display: flex;
   gap: 12px;
   justify-content: space-between;
-  min-height: 36px;
-  padding-top: 8px;
+  min-height: 52px;
+  padding-top: 10px;
 }
 
-.block-list span {
+.block-list div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.block-list span,
+.block-list small {
   color: #344039;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.block-list small,
+.muted-text {
+  color: #66716a;
+  font-size: 0.8rem;
+}
+
+.block-list strong {
+  flex: 0 0 auto;
 }
 
 @media (max-width: 760px) {

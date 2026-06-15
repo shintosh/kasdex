@@ -8,7 +8,10 @@ rust-version.workspace = true
 
 [dependencies]
 axum.workspace = true
+chrono.workspace = true
+hex.workspace = true
 kasdex-core = { path = "../kasdex-core" }
+kasdex-store = { path = "../kasdex-store" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

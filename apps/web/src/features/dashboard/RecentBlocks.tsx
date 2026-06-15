@@ -23,14 +23,23 @@ export function RecentBlocks() {
       {blocks.isLoading ? <p>Loading blocks</p> : null}
       {blocks.isError ? <p class="error-text">Blocks unavailable</p> : null}
       {blocks.data ? (
-        <ol class="block-list">
-          {blocks.data.items.map((block) => (
-            <li key={block.hash}>
-              <span>{block.hash}</span>
-              <strong>{block.blue_score}</strong>
-            </li>
-          ))}
-        </ol>
+        blocks.data.items.length > 0 ? (
+          <ol class="block-list">
+            {blocks.data.items.map((block) => (
+              <li key={block.hash}>
+                <div>
+                  <span>{block.hash}</span>
+                  <small>
+                    DAA {block.daa_score} · {block.tx_count} tx · {block.timestamp}
+                  </small>
+                </div>
+                <strong>{block.blue_score}</strong>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p class="muted-text">No indexed blocks yet</p>
+        )
       ) : null}
     </section>
   );

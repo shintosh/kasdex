@@ -20,6 +20,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/blocks/{hash}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getBlock"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/health": {
         parameters: {
             query?: never;
@@ -68,6 +84,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/transactions/{txid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getTransaction"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -76,6 +108,14 @@ export interface components {
             code: string;
             message: string;
             request_id?: string | null;
+        };
+        BlockDetail: {
+            blue_score: string;
+            daa_score: string;
+            hash: string;
+            timestamp: string;
+            /** Format: int32 */
+            tx_count: number;
         };
         BlockSummary: {
             blue_score: string;
@@ -126,6 +166,14 @@ export interface components {
             kind: "transaction";
             txid: string;
         };
+        TransactionSummary: {
+            accepting_block_hash?: string | null;
+            /** Format: int32 */
+            input_count: number;
+            /** Format: int32 */
+            output_count: number;
+            txid: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -158,6 +206,47 @@ export interface operations {
             };
             /** @description Invalid pagination query */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    getBlock: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 32-byte block hash as hex */
+                hash: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Block detail */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BlockDetail"];
+                };
+            };
+            /** @description Invalid hash */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Block not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -229,6 +318,47 @@ export interface operations {
             };
             /** @description Invalid search query */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    getTransaction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 32-byte transaction id as hex */
+                txid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Transaction summary */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransactionSummary"];
+                };
+            };
+            /** @description Invalid transaction id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Transaction not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

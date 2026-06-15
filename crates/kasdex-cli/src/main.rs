@@ -18,6 +18,8 @@ enum Command {
     Serve {
         #[arg(long, default_value = "127.0.0.1:18180")]
         listen: SocketAddr,
+        #[arg(long, default_value = ".kasdex/index")]
+        data_dir: PathBuf,
     },
     Openapi {
         #[arg(long)]
@@ -52,7 +54,7 @@ async fn main() -> anyhow::Result<()> {
     init_tracing();
 
     match Cli::parse().command {
-        Command::Serve { listen } => serve(listen).await,
+        Command::Serve { listen, data_dir } => serve(listen, data_dir).await,
         Command::Openapi { output } => write_openapi(output),
         Command::Node { command } => match command {
             NodeCommand::Probe { rpc_url } => probe_node(rpc_url).await,
@@ -66,13 +68,15 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
-async fn serve(listen: SocketAddr) -> anyhow::Result<()> {
+async fn serve(listen: SocketAddr, data_dir: PathBuf) -> anyhow::Result<()> {
+    let store = kasdex_store_rocks::RocksStore::open(&data_dir)
+        .with_context(|| format!("failed to open index store at {}", data_dir.display()))?;
     let listener = TcpListener::bind(listen)
         .await
         .with_context(|| format!("failed to bind {listen}"))?;
-    info!(%listen, "serving kasdex api");
+    info!(%listen, data_dir = %data_dir.display(), "serving kasdex api");
 
-    axum::serve(listener, kasdex_api::router())
+    axum::serve(listener, kasdex_api::router_with_store(store))
         .with_graceful_shutdown(shutdown_signal())
         .await
         .context("api server failed")
