@@ -7,8 +7,19 @@ const TXID_PATTERN = /^[0-9a-fA-F]{64}$/;
 
 export function TransactionBrowser() {
   const [input, setInput] = useState('');
+  const [copiedValue, setCopiedValue] = useState<string | null>(null);
   const txid = input.trim().toLowerCase();
   const isValid = TXID_PATTERN.test(txid);
+
+  const copyValue = async (value: string) => {
+    try {
+      await navigator.clipboard?.writeText(value);
+      setCopiedValue(value);
+      window.setTimeout(() => setCopiedValue(null), 1600);
+    } catch {
+      setCopiedValue(null);
+    }
+  };
 
   const transaction = useQuery({
     queryKey: queryKeys.transaction(txid),
@@ -49,11 +60,29 @@ export function TransactionBrowser() {
           <dl class="metric-list">
             <div>
               <dt>Transaction</dt>
-              <dd>{transaction.data.txid}</dd>
+              <dd>
+                <CopyableValue
+                  copied={copiedValue === transaction.data.txid}
+                  label="transaction id"
+                  value={transaction.data.txid}
+                  onCopy={copyValue}
+                />
+              </dd>
             </div>
             <div>
               <dt>Accepting block</dt>
-              <dd>{transaction.data.accepting_block_hash ?? 'unknown'}</dd>
+              <dd>
+                {transaction.data.accepting_block_hash ? (
+                  <CopyableValue
+                    copied={copiedValue === transaction.data.accepting_block_hash}
+                    label="accepting block"
+                    value={transaction.data.accepting_block_hash}
+                    onCopy={copyValue}
+                  />
+                ) : (
+                  'unknown'
+                )}
+              </dd>
             </div>
             <div>
               <dt>Inputs</dt>
@@ -112,7 +141,18 @@ export function TransactionBrowser() {
                 <ol class="transaction-io-list">
                   {transaction.data.detail.inputs.map((input, index) => (
                     <li key={index}>
-                      <span>{input.previous_txid ?? 'coinbase or unresolved'}</span>
+                      <span>
+                        {input.previous_txid ? (
+                          <CopyableValue
+                            copied={copiedValue === outpointValue(input)}
+                            label="previous outpoint"
+                            value={outpointValue(input)}
+                            onCopy={copyValue}
+                          />
+                        ) : (
+                          'coinbase or unresolved'
+                        )}
+                      </span>
                       <small>
                         {input.previous_output_index == null
                           ? 'no outpoint'
@@ -130,7 +170,18 @@ export function TransactionBrowser() {
                 <ol class="transaction-io-list">
                   {transaction.data.detail.outputs.map((output) => (
                     <li key={output.output_index}>
-                      <span>{output.script_public_key_address ?? 'address unavailable'}</span>
+                      <span>
+                        {output.script_public_key_address ? (
+                          <CopyableValue
+                            copied={copiedValue === output.script_public_key_address}
+                            label="address"
+                            value={output.script_public_key_address}
+                            onCopy={copyValue}
+                          />
+                        ) : (
+                          'address unavailable'
+                        )}
+                      </span>
                       <small>
                         {output.amount} sompi · {output.script_public_key_type ?? 'unknown script'}
                       </small>
@@ -144,4 +195,26 @@ export function TransactionBrowser() {
       ) : null}
     </section>
   );
+}
+
+type CopyableValueProps = {
+  copied: boolean;
+  label: string;
+  value: string;
+  onCopy: (value: string) => void;
+};
+
+function CopyableValue({ copied, label, value, onCopy }: CopyableValueProps) {
+  return (
+    <span class="copyable-value">
+      <span>{value}</span>
+      <button aria-label={`Copy ${label}`} title={`Copy ${label}`} type="button" onClick={() => onCopy(value)}>
+        {copied ? 'Copied' : 'Copy'}
+      </button>
+    </span>
+  );
+}
+
+function outpointValue(input: { previous_output_index?: null | number; previous_txid?: null | string }) {
+  return `${input.previous_txid}:${input.previous_output_index ?? 'unknown'}`;
 }

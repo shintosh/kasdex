@@ -211,6 +211,38 @@ a {
   overflow-wrap: anywhere;
 }
 
+.copyable-value {
+  align-items: center;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.copyable-value span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.copyable-value button {
+  background: #eef5f2;
+  border: 1px solid #cfe0d9;
+  border-radius: 6px;
+  color: #0f5f55;
+  cursor: pointer;
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 650;
+  min-height: 28px;
+  padding: 4px 8px;
+}
+
+.copyable-value button:hover {
+  background: #e4eee9;
+}
+
 @media (max-width: 760px) {
   .topbar,
   .dashboard-grid {
