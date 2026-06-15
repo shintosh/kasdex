@@ -14,7 +14,7 @@ use kasdex_core::IndexedContext;
 use kasdex_indexer::{IndexerRuntimeStatus, IndexerStatusHandle};
 use kasdex_store::{
     AddressHistoryRecord, AddressUtxoRecord, BlockSummaryRecord, ChainStore, CoverageClass,
-    CoverageRangeRecord, StoreError, TxDetailRecordV1, TxSummaryRecord,
+    CoverageRangeRecord, IndexerStatsRecord, StoreError, TxDetailRecordV1, TxSummaryRecord,
 };
 use tower_http::trace::TraceLayer;
 use utoipa::OpenApi;
@@ -185,6 +185,13 @@ async fn indexer_status(
             last_start_hash: None,
             last_indexed_blocks: None,
             last_indexed_transactions: None,
+            total_indexed_blocks: None,
+            total_indexed_transactions: None,
+            total_write_batches: None,
+            total_put_operations: None,
+            total_delete_operations: None,
+            last_batch_put_operations: None,
+            last_batch_delete_operations: None,
             last_checkpoint_hash: None,
             last_poll_duration_ms: None,
             last_blocks_per_second: None,
@@ -195,6 +202,7 @@ async fn indexer_status(
     };
 
     let checkpoint = store.checkpoint().map_err(store_error)?;
+    let stats = store.indexer_stats().map_err(store_error)?;
     let coverage = store
         .coverage_range("default")
         .map_err(store_error)?
@@ -205,6 +213,7 @@ async fn indexer_status(
         .map(IndexerStatusHandle::snapshot);
     Ok(Json(indexer_status_response(
         checkpoint,
+        stats,
         runtime.as_ref(),
         coverage,
     )))
@@ -565,6 +574,7 @@ fn indexed_context(store: &dyn ChainStore) -> Result<IndexedContext, ApiError> {
 
 fn indexer_status_response(
     checkpoint: Option<kasdex_store::Checkpoint>,
+    stats: Option<IndexerStatsRecord>,
     runtime: Option<&IndexerRuntimeStatus>,
     coverage: Option<CoverageRange>,
 ) -> IndexerStatusResponse {
@@ -597,6 +607,8 @@ fn indexer_status_response(
         .as_ref()
         .map(|checkpoint| hex::encode(checkpoint.block_hash));
 
+    let coverage_evaluation = evaluate_coverage(coverage.as_ref(), runtime);
+
     IndexerStatusResponse {
         state,
         network,
@@ -625,13 +637,44 @@ fn indexer_status_response(
         last_indexed_transactions: runtime
             .and_then(|runtime| runtime.last_indexed_transactions)
             .map(|count| count as u64),
+        total_indexed_blocks: stats.as_ref().map(|stats| stats.total_indexed_blocks),
+        total_indexed_transactions: stats.as_ref().map(|stats| stats.total_indexed_transactions),
+        total_write_batches: stats.as_ref().map(|stats| stats.total_write_batches),
+        total_put_operations: stats.as_ref().map(|stats| stats.total_put_operations),
+        total_delete_operations: stats.as_ref().map(|stats| stats.total_delete_operations),
+        last_batch_put_operations: stats.as_ref().map(|stats| stats.last_batch_put_operations),
+        last_batch_delete_operations: stats
+            .as_ref()
+            .map(|stats| stats.last_batch_delete_operations),
         last_checkpoint_hash: runtime.and_then(|runtime| runtime.last_checkpoint_hash.clone()),
         last_poll_duration_ms: runtime.and_then(|runtime| runtime.last_poll_duration_ms),
         last_blocks_per_second: runtime.and_then(|runtime| runtime.last_blocks_per_second),
         last_transactions_per_second: runtime
             .and_then(|runtime| runtime.last_transactions_per_second),
         coverage,
-        coverage_evaluation: "unknown".to_owned(),
+        coverage_evaluation,
+    }
+}
+
+fn evaluate_coverage(
+    coverage: Option<&CoverageRange>,
+    runtime: Option<&IndexerRuntimeStatus>,
+) -> String {
+    let Some(coverage) = coverage else {
+        return "unknown".to_owned();
+    };
+    match coverage.coverage_class.as_str() {
+        "archival_verified" => "verified_full".to_owned(),
+        "pruned_window" => {
+            let lag = runtime.and_then(|runtime| runtime.lag_daa_score);
+            if lag.is_some_and(|lag| lag <= 20) {
+                "near_tip_pruned_window_gap_status_unknown".to_owned()
+            } else {
+                "backfilling_pruned_window_gap_status_unknown".to_owned()
+            }
+        }
+        "partial_backfill" => "partial_gap_status_unknown".to_owned(),
+        _ => "unknown".to_owned(),
     }
 }
 

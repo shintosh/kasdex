@@ -49,6 +49,22 @@ pub struct StoreMetadata {
     pub key_layout_version: u16,
 }
 
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct IndexerStatsRecord {
+    pub schema_version: u16,
+    pub total_indexed_blocks: u64,
+    pub total_indexed_transactions: u64,
+    pub total_write_batches: u64,
+    pub total_put_operations: u64,
+    pub total_delete_operations: u64,
+    pub last_batch_put_operations: u64,
+    pub last_batch_delete_operations: u64,
+    pub last_batch_blocks: u64,
+    pub last_batch_transactions: u64,
+    pub last_updated_daa_score: Option<u64>,
+    pub last_updated_block_hash: Option<[u8; 32]>,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct BlockSummaryRecord {
     pub hash: [u8; 32],
@@ -191,6 +207,8 @@ pub trait ChainStore: Send + Sync {
     fn put_checkpoint(&self, checkpoint: &Checkpoint) -> StoreResult<()>;
     fn store_metadata(&self) -> StoreResult<Option<StoreMetadata>>;
     fn put_store_metadata(&self, metadata: &StoreMetadata) -> StoreResult<()>;
+    fn indexer_stats(&self) -> StoreResult<Option<IndexerStatsRecord>>;
+    fn put_indexer_stats(&self, stats: &IndexerStatsRecord) -> StoreResult<()>;
     fn coverage_range(&self, range_id: &str) -> StoreResult<Option<CoverageRangeRecord>>;
     fn put_coverage_range(&self, coverage: &CoverageRangeRecord) -> StoreResult<()>;
 
@@ -263,6 +281,14 @@ where
 
     fn put_store_metadata(&self, metadata: &StoreMetadata) -> StoreResult<()> {
         self.as_ref().put_store_metadata(metadata)
+    }
+
+    fn indexer_stats(&self) -> StoreResult<Option<IndexerStatsRecord>> {
+        self.as_ref().indexer_stats()
+    }
+
+    fn put_indexer_stats(&self, stats: &IndexerStatsRecord) -> StoreResult<()> {
+        self.as_ref().put_indexer_stats(stats)
     }
 
     fn coverage_range(&self, range_id: &str) -> StoreResult<Option<CoverageRangeRecord>> {

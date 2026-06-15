@@ -200,6 +200,10 @@ export interface components {
             indexed_score?: string | null;
             lag_blocks?: string | null;
             lag_daa_score?: string | null;
+            /** Format: int64 */
+            last_batch_delete_operations?: number | null;
+            /** Format: int64 */
+            last_batch_put_operations?: number | null;
             /** Format: double */
             last_blocks_per_second?: number | null;
             last_checkpoint_hash?: string | null;
@@ -221,6 +225,16 @@ export interface components {
             node_observed_at?: string | null;
             source: string;
             state: string;
+            /** Format: int64 */
+            total_delete_operations?: number | null;
+            /** Format: int64 */
+            total_indexed_blocks?: number | null;
+            /** Format: int64 */
+            total_indexed_transactions?: number | null;
+            /** Format: int64 */
+            total_put_operations?: number | null;
+            /** Format: int64 */
+            total_write_batches?: number | null;
             virtual_daa_score?: string | null;
         };
         Page: {

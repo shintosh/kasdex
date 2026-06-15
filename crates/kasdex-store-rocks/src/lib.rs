@@ -2,8 +2,9 @@ use std::path::Path;
 
 use kasdex_store::{
     AddressHistoryRecord, AddressUtxoRecord, BlockEffectRecordV1, BlockSummaryRecord, ChainStore,
-    Checkpoint, CoverageRangeRecord, IndexedBlockWrite, OutpointStateRecord, Page, StoreError,
-    StoreMetadata, StoreResult, TxDetailRecordV1, TxSummaryRecord, UnresolvedSpendRecord,
+    Checkpoint, CoverageRangeRecord, IndexedBlockWrite, IndexerStatsRecord, OutpointStateRecord,
+    Page, StoreError, StoreMetadata, StoreResult, TxDetailRecordV1, TxSummaryRecord,
+    UnresolvedSpendRecord,
 };
 use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, DB, Direction, IteratorMode, Options};
 use serde::{Serialize, de::DeserializeOwned};
@@ -24,6 +25,7 @@ const MEMPOOL: &str = "mempool";
 
 const CHECKPOINT_KEY: &[u8] = b"checkpoint";
 const STORE_METADATA_KEY: &[u8] = b"store_metadata";
+const INDEXER_STATS_KEY: &[u8] = b"indexer_stats";
 const STORE_SCHEMA_VERSION: u16 = 1;
 const KEY_LAYOUT_VERSION: u16 = 1;
 
@@ -120,6 +122,14 @@ impl ChainStore for RocksStore {
         self.put_encoded(META, STORE_METADATA_KEY, metadata)
     }
 
+    fn indexer_stats(&self) -> StoreResult<Option<IndexerStatsRecord>> {
+        self.get_decoded(META, INDEXER_STATS_KEY)
+    }
+
+    fn put_indexer_stats(&self, stats: &IndexerStatsRecord) -> StoreResult<()> {
+        self.put_encoded(META, INDEXER_STATS_KEY, stats)
+    }
+
     fn coverage_range(&self, range_id: &str) -> StoreResult<Option<CoverageRangeRecord>> {
         self.get_decoded(COVERAGE_RANGES, range_id)
     }
@@ -156,18 +166,24 @@ impl ChainStore for RocksStore {
         let coverage_cf = self.cf(COVERAGE_RANGES)?;
 
         let mut batch = rocksdb::WriteBatch::default();
+        let mut put_operations = 0_u64;
+        let mut delete_operations = 0_u64;
         let encoded_block = encode(write.block)?;
         batch.put_cf(&blocks_by_hash_cf, write.block.hash, &encoded_block);
+        put_operations += 1;
         batch.put_cf(
             &blocks_by_score_cf,
             block_score_key(write.block.blue_score, &write.block.hash),
             &encoded_block,
         );
+        put_operations += 1;
         for tx in write.txs {
             batch.put_cf(&tx_by_id_cf, tx.txid, encode(tx)?);
+            put_operations += 1;
         }
         for detail in write.tx_details {
             batch.put_cf(&tx_detail_by_id_cf, detail.txid, encode(detail)?);
+            put_operations += 1;
         }
         for event in write.address_history {
             batch.put_cf(
@@ -175,6 +191,7 @@ impl ChainStore for RocksStore {
                 address_history_key(event),
                 encode(event)?,
             );
+            put_operations += 1;
         }
         for utxo in write.address_utxos {
             batch.put_cf(
@@ -182,12 +199,14 @@ impl ChainStore for RocksStore {
                 address_utxo_key(&utxo.script_hash, &utxo.txid, utxo.output_index),
                 encode(utxo)?,
             );
+            put_operations += 1;
         }
         for utxo in write.spent_address_utxos {
             batch.delete_cf(
                 &address_utxos_cf,
                 address_utxo_key(&utxo.script_hash, &utxo.txid, utxo.output_index),
             );
+            delete_operations += 1;
         }
         for outpoint in write.outpoint_states {
             batch.put_cf(
@@ -195,6 +214,7 @@ impl ChainStore for RocksStore {
                 outpoint_key(&outpoint.txid, outpoint.output_index),
                 encode(outpoint)?,
             );
+            put_operations += 1;
         }
         for spend in write.unresolved_spends {
             batch.put_cf(
@@ -202,18 +222,42 @@ impl ChainStore for RocksStore {
                 unresolved_spend_key(spend),
                 encode(spend)?,
             );
+            put_operations += 1;
         }
         batch.put_cf(
             &block_effects_cf,
             write.effect.block_hash,
             encode(write.effect)?,
         );
+        put_operations += 1;
         batch.put_cf(&meta_cf, CHECKPOINT_KEY, encode(write.checkpoint)?);
+        put_operations += 1;
         batch.put_cf(
             &coverage_cf,
             &write.coverage.range_id,
             encode(write.coverage)?,
         );
+        put_operations += 1;
+        let mut stats = self.indexer_stats()?.unwrap_or(IndexerStatsRecord {
+            schema_version: 1,
+            ..IndexerStatsRecord::default()
+        });
+        stats.total_indexed_blocks = stats.total_indexed_blocks.saturating_add(1);
+        stats.total_indexed_transactions = stats
+            .total_indexed_transactions
+            .saturating_add(write.txs.len() as u64);
+        stats.total_write_batches = stats.total_write_batches.saturating_add(1);
+        stats.total_put_operations = stats.total_put_operations.saturating_add(put_operations);
+        stats.total_delete_operations = stats
+            .total_delete_operations
+            .saturating_add(delete_operations);
+        stats.last_batch_put_operations = put_operations;
+        stats.last_batch_delete_operations = delete_operations;
+        stats.last_batch_blocks = 1;
+        stats.last_batch_transactions = write.txs.len() as u64;
+        stats.last_updated_daa_score = Some(write.block.daa_score);
+        stats.last_updated_block_hash = Some(write.block.hash);
+        batch.put_cf(&meta_cf, INDEXER_STATS_KEY, encode(&stats)?);
 
         self.db.write(batch).map_err(rocks_err)
     }
@@ -835,6 +879,23 @@ mod tests {
         assert_eq!(
             store.coverage_range(&coverage.range_id).unwrap(),
             Some(coverage)
+        );
+        assert_eq!(
+            store.indexer_stats().unwrap(),
+            Some(IndexerStatsRecord {
+                schema_version: 1,
+                total_indexed_blocks: 1,
+                total_indexed_transactions: 1,
+                total_write_batches: 1,
+                total_put_operations: 10,
+                total_delete_operations: 0,
+                last_batch_put_operations: 10,
+                last_batch_delete_operations: 0,
+                last_batch_blocks: 1,
+                last_batch_transactions: 1,
+                last_updated_daa_score: Some(11),
+                last_updated_block_hash: Some(bytes(10)),
+            })
         );
     }
 
