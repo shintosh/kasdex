@@ -4,7 +4,10 @@ use std::{
 };
 
 use kasdex_node::{GrpcKaspaNode, NodeError, protowire};
-use kasdex_store::{BlockSummaryRecord, ChainStore, Checkpoint, StoreError, TxSummaryRecord};
+use kasdex_store::{
+    BlockSummaryRecord, ChainStore, Checkpoint, StoreError, TxDetailRecordV1, TxInputRecordV1,
+    TxOutputRecordV1, TxSummaryRecord,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum IndexerState {
@@ -318,7 +321,7 @@ pub async fn run_bounded_backfill<S: ChainStore>(
         store.put_block(&block_record)?;
 
         for tx in block.transactions {
-            if let Some(verbose) = tx.verbose_data {
+            if let Some(verbose) = tx.verbose_data.as_ref() {
                 let txid = parse_hash(&verbose.transaction_id)?;
                 store.put_tx(&TxSummaryRecord {
                     txid,
@@ -326,6 +329,14 @@ pub async fn run_bounded_backfill<S: ChainStore>(
                     input_count: tx.inputs.len() as u32,
                     output_count: tx.outputs.len() as u32,
                 })?;
+                store.put_tx_detail(&tx_detail_record(
+                    &tx,
+                    verbose,
+                    txid,
+                    block_hash,
+                    header.daa_score,
+                    header.timestamp,
+                )?)?;
                 indexed_transactions += 1;
             }
         }
@@ -368,6 +379,118 @@ fn parse_hash(hash: &str) -> IndexerResult<[u8; 32]> {
     bytes
         .try_into()
         .map_err(|_| IndexerError::InvalidHash(hash.to_owned()))
+}
+
+fn parse_optional_hash(hash: &str) -> IndexerResult<Option<[u8; 32]>> {
+    if hash.is_empty() {
+        return Ok(None);
+    }
+    parse_hash(hash).map(Some)
+}
+
+fn tx_detail_record(
+    tx: &protowire::RpcTransaction,
+    verbose: &protowire::RpcTransactionVerboseData,
+    txid: [u8; 32],
+    accepting_block_hash: [u8; 32],
+    accepting_daa_score: u64,
+    accepting_timestamp_ms: i64,
+) -> IndexerResult<TxDetailRecordV1> {
+    let inputs = tx
+        .inputs
+        .iter()
+        .map(tx_input_record)
+        .collect::<IndexerResult<Vec<_>>>()?;
+    let outputs = tx
+        .outputs
+        .iter()
+        .enumerate()
+        .map(|(index, output)| tx_output_record(index as u32, output))
+        .collect();
+
+    Ok(TxDetailRecordV1 {
+        schema_version: 1,
+        detail_available: true,
+        detail_complete: false,
+        txid,
+        accepting_block_hash,
+        accepting_daa_score,
+        accepting_timestamp_ms,
+        version: tx.version,
+        lock_time: tx.lock_time,
+        subnetwork_id: tx.subnetwork_id.clone(),
+        gas: tx.gas,
+        payload: tx.payload.clone(),
+        mass: 0,
+        storage_mass: tx.storage_mass,
+        compute_mass: verbose.compute_mass,
+        block_time: verbose.block_time,
+        inputs,
+        outputs,
+    })
+}
+
+fn tx_input_record(input: &protowire::RpcTransactionInput) -> IndexerResult<TxInputRecordV1> {
+    let previous_txid = input
+        .previous_outpoint
+        .as_ref()
+        .map(|outpoint| parse_optional_hash(&outpoint.transaction_id))
+        .transpose()?
+        .flatten();
+    let previous_output_index = input
+        .previous_outpoint
+        .as_ref()
+        .map(|outpoint| outpoint.index);
+    let previous_output_resolved = input
+        .verbose_data
+        .as_ref()
+        .is_some_and(|verbose| verbose.utxo_entry.is_some());
+
+    Ok(TxInputRecordV1 {
+        previous_txid,
+        previous_output_index,
+        signature_script: input.signature_script.clone(),
+        sequence: input.sequence,
+        sig_op_count: input.sig_op_count,
+        compute_budget: input.compute_budget,
+        previous_output_resolved,
+    })
+}
+
+fn tx_output_record(
+    output_index: u32,
+    output: &protowire::RpcTransactionOutput,
+) -> TxOutputRecordV1 {
+    let (script_public_key_version, script_public_key) = output
+        .script_public_key
+        .as_ref()
+        .map(|script| (script.version, script.script_public_key.clone()))
+        .unwrap_or_default();
+    let script_public_key_type = output
+        .verbose_data
+        .as_ref()
+        .and_then(|verbose| non_empty_string(&verbose.script_public_key_type));
+    let script_public_key_address = output
+        .verbose_data
+        .as_ref()
+        .and_then(|verbose| non_empty_string(&verbose.script_public_key_address));
+
+    TxOutputRecordV1 {
+        output_index,
+        amount: output.amount,
+        script_public_key_version,
+        script_public_key,
+        script_public_key_type,
+        script_public_key_address,
+    }
+}
+
+fn non_empty_string(value: &str) -> Option<String> {
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_owned())
+    }
 }
 
 #[allow(dead_code)]

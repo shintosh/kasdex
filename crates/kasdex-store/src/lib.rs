@@ -39,6 +39,49 @@ pub struct TxSummaryRecord {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TxDetailRecordV1 {
+    pub schema_version: u16,
+    pub detail_available: bool,
+    pub detail_complete: bool,
+    pub txid: [u8; 32],
+    pub accepting_block_hash: [u8; 32],
+    pub accepting_daa_score: u64,
+    pub accepting_timestamp_ms: i64,
+    pub version: u32,
+    pub lock_time: u64,
+    pub subnetwork_id: String,
+    pub gas: u64,
+    pub payload: String,
+    pub mass: u64,
+    pub storage_mass: u64,
+    pub compute_mass: u64,
+    pub block_time: u64,
+    pub inputs: Vec<TxInputRecordV1>,
+    pub outputs: Vec<TxOutputRecordV1>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TxInputRecordV1 {
+    pub previous_txid: Option<[u8; 32]>,
+    pub previous_output_index: Option<u32>,
+    pub signature_script: String,
+    pub sequence: u64,
+    pub sig_op_count: u32,
+    pub compute_budget: u32,
+    pub previous_output_resolved: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TxOutputRecordV1 {
+    pub output_index: u32,
+    pub amount: u64,
+    pub script_public_key_version: u32,
+    pub script_public_key: String,
+    pub script_public_key_type: Option<String>,
+    pub script_public_key_address: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct AddressHistoryRecord {
     pub script_hash: [u8; 32],
     pub daa_score: u64,
@@ -81,6 +124,8 @@ pub trait ChainStore: Send + Sync {
 
     fn put_tx(&self, tx: &TxSummaryRecord) -> StoreResult<()>;
     fn tx_by_id(&self, txid: &[u8; 32]) -> StoreResult<Option<TxSummaryRecord>>;
+    fn put_tx_detail(&self, tx: &TxDetailRecordV1) -> StoreResult<()>;
+    fn tx_detail_by_id(&self, txid: &[u8; 32]) -> StoreResult<Option<TxDetailRecordV1>>;
 
     fn put_address_history(&self, event: &AddressHistoryRecord) -> StoreResult<()>;
     fn address_history(
@@ -147,6 +192,14 @@ where
 
     fn tx_by_id(&self, txid: &[u8; 32]) -> StoreResult<Option<TxSummaryRecord>> {
         self.as_ref().tx_by_id(txid)
+    }
+
+    fn put_tx_detail(&self, tx: &TxDetailRecordV1) -> StoreResult<()> {
+        self.as_ref().put_tx_detail(tx)
+    }
+
+    fn tx_detail_by_id(&self, txid: &[u8; 32]) -> StoreResult<Option<TxDetailRecordV1>> {
+        self.as_ref().tx_detail_by_id(txid)
     }
 
     fn put_address_history(&self, event: &AddressHistoryRecord) -> StoreResult<()> {

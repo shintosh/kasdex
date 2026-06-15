@@ -59,6 +59,45 @@ pub struct TransactionSummary {
     pub accepting_block_hash: Option<String>,
     pub input_count: u32,
     pub output_count: u32,
+    pub detail_available: bool,
+    pub detail_complete: bool,
+    pub detail: Option<TransactionDetail>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+pub struct TransactionDetail {
+    pub accepting_daa_score: String,
+    pub accepting_timestamp: String,
+    pub version: u32,
+    pub lock_time: String,
+    pub subnetwork_id: String,
+    pub gas: String,
+    pub payload_size: u64,
+    pub mass: String,
+    pub storage_mass: String,
+    pub compute_mass: String,
+    pub block_time: String,
+    pub inputs: Vec<TransactionInput>,
+    pub outputs: Vec<TransactionOutput>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+pub struct TransactionInput {
+    pub previous_txid: Option<String>,
+    pub previous_output_index: Option<u32>,
+    pub sequence: String,
+    pub sig_op_count: u32,
+    pub compute_budget: u32,
+    pub previous_output_resolved: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+pub struct TransactionOutput {
+    pub output_index: u32,
+    pub amount: String,
+    pub script_public_key_version: u32,
+    pub script_public_key_type: Option<String>,
+    pub script_public_key_address: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, IntoParams)]

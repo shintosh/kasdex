@@ -2,7 +2,7 @@ use std::path::Path;
 
 use kasdex_store::{
     AddressHistoryRecord, AddressUtxoRecord, BlockSummaryRecord, ChainStore, Checkpoint, Page,
-    StoreError, StoreResult, TxSummaryRecord,
+    StoreError, StoreResult, TxDetailRecordV1, TxSummaryRecord,
 };
 use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, DB, Direction, IteratorMode, Options};
 use serde::{Serialize, de::DeserializeOwned};
@@ -11,6 +11,7 @@ const META: &str = "meta";
 const BLOCKS_BY_HASH: &str = "blocks_by_hash";
 const BLOCKS_BY_SCORE: &str = "blocks_by_score";
 const TX_BY_ID: &str = "tx_by_id";
+const TX_DETAIL_BY_ID: &str = "tx_detail_by_id";
 const TX_ACCEPTANCE: &str = "tx_acceptance";
 const ADDRESS_HISTORY: &str = "address_history";
 const ADDRESS_UTXOS: &str = "address_utxos";
@@ -167,6 +168,14 @@ impl ChainStore for RocksStore {
         self.get_decoded(TX_BY_ID, txid)
     }
 
+    fn put_tx_detail(&self, tx: &TxDetailRecordV1) -> StoreResult<()> {
+        self.put_encoded(TX_DETAIL_BY_ID, tx.txid, tx)
+    }
+
+    fn tx_detail_by_id(&self, txid: &[u8; 32]) -> StoreResult<Option<TxDetailRecordV1>> {
+        self.get_decoded(TX_DETAIL_BY_ID, txid)
+    }
+
     fn put_address_history(&self, event: &AddressHistoryRecord) -> StoreResult<()> {
         self.put_encoded(ADDRESS_HISTORY, address_history_key(event), event)
     }
@@ -212,12 +221,13 @@ impl ChainStore for RocksStore {
     }
 }
 
-fn column_families() -> [&'static str; 10] {
+fn column_families() -> [&'static str; 11] {
     [
         META,
         BLOCKS_BY_HASH,
         BLOCKS_BY_SCORE,
         TX_BY_ID,
+        TX_DETAIL_BY_ID,
         TX_ACCEPTANCE,
         ADDRESS_HISTORY,
         ADDRESS_UTXOS,
@@ -299,7 +309,7 @@ fn page_prefix<T: DeserializeOwned>(
 
 #[cfg(test)]
 mod tests {
-    use kasdex_store::ChainStore;
+    use kasdex_store::{ChainStore, TxDetailRecordV1, TxInputRecordV1, TxOutputRecordV1};
     use tempfile::TempDir;
 
     use super::*;
@@ -337,6 +347,44 @@ mod tests {
         };
         store.put_tx(&tx).unwrap();
         assert_eq!(store.tx_by_id(&tx.txid).unwrap(), Some(tx));
+
+        let detail = TxDetailRecordV1 {
+            schema_version: 1,
+            detail_available: true,
+            detail_complete: false,
+            txid: bytes(3),
+            accepting_block_hash: bytes(2),
+            accepting_daa_score: 8,
+            accepting_timestamp_ms: 123,
+            version: 1,
+            lock_time: 0,
+            subnetwork_id: "00".to_owned(),
+            gas: 0,
+            payload: String::new(),
+            mass: 10,
+            storage_mass: 5,
+            compute_mass: 4,
+            block_time: 123,
+            inputs: vec![TxInputRecordV1 {
+                previous_txid: Some(bytes(4)),
+                previous_output_index: Some(0),
+                signature_script: "abcd".to_owned(),
+                sequence: 1,
+                sig_op_count: 1,
+                compute_budget: 0,
+                previous_output_resolved: true,
+            }],
+            outputs: vec![TxOutputRecordV1 {
+                output_index: 0,
+                amount: 100,
+                script_public_key_version: 0,
+                script_public_key: "51".to_owned(),
+                script_public_key_type: Some("pubkey".to_owned()),
+                script_public_key_address: Some("kaspa:test".to_owned()),
+            }],
+        };
+        store.put_tx_detail(&detail).unwrap();
+        assert_eq!(store.tx_detail_by_id(&detail.txid).unwrap(), Some(detail));
     }
 
     #[test]

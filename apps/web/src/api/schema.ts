@@ -186,8 +186,48 @@ export interface components {
             kind: "transaction";
             txid: string;
         };
+        TransactionDetail: {
+            accepting_daa_score: string;
+            accepting_timestamp: string;
+            block_time: string;
+            compute_mass: string;
+            gas: string;
+            inputs: components["schemas"]["TransactionInput"][];
+            lock_time: string;
+            mass: string;
+            outputs: components["schemas"]["TransactionOutput"][];
+            /** Format: int64 */
+            payload_size: number;
+            storage_mass: string;
+            subnetwork_id: string;
+            /** Format: int32 */
+            version: number;
+        };
+        TransactionInput: {
+            /** Format: int32 */
+            compute_budget: number;
+            /** Format: int32 */
+            previous_output_index?: number | null;
+            previous_output_resolved: boolean;
+            previous_txid?: string | null;
+            sequence: string;
+            /** Format: int32 */
+            sig_op_count: number;
+        };
+        TransactionOutput: {
+            amount: string;
+            /** Format: int32 */
+            output_index: number;
+            script_public_key_address?: string | null;
+            script_public_key_type?: string | null;
+            /** Format: int32 */
+            script_public_key_version: number;
+        };
         TransactionSummary: {
             accepting_block_hash?: string | null;
+            detail?: null | components["schemas"]["TransactionDetail"];
+            detail_available: boolean;
+            detail_complete: boolean;
             /** Format: int32 */
             input_count: number;
             /** Format: int32 */

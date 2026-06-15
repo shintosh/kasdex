@@ -12,7 +12,7 @@ pub use dto::*;
 pub use error::ApiError;
 use kasdex_core::IndexedContext;
 use kasdex_indexer::{IndexerRuntimeStatus, IndexerStatusHandle};
-use kasdex_store::{BlockSummaryRecord, ChainStore, StoreError, TxSummaryRecord};
+use kasdex_store::{BlockSummaryRecord, ChainStore, StoreError, TxDetailRecordV1, TxSummaryRecord};
 use tower_http::trace::TraceLayer;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
@@ -29,6 +29,9 @@ use utoipa_swagger_ui::SwaggerUi;
         IndexerStatusResponse,
         SearchResponse,
         SearchResult,
+        TransactionDetail,
+        TransactionInput,
+        TransactionOutput,
         TransactionSummary,
         kasdex_core::IndexedContext,
     )),
@@ -264,7 +267,8 @@ async fn get_transaction(
         .ok_or_else(|| ApiError::not_found("transaction not found"))?;
     let txid = parse_hash(&txid)?;
     let tx = store.tx_by_id(&txid).map_err(store_error)?;
-    tx.map(transaction_summary)
+    let detail = store.tx_detail_by_id(&txid).map_err(store_error)?;
+    tx.map(|tx| transaction_summary(tx, detail))
         .map(Json)
         .ok_or_else(|| ApiError::not_found("transaction not found"))
 }
@@ -422,12 +426,62 @@ fn block_detail(block: BlockSummaryRecord) -> BlockDetail {
     }
 }
 
-fn transaction_summary(tx: TxSummaryRecord) -> TransactionSummary {
+fn transaction_summary(
+    tx: TxSummaryRecord,
+    detail: Option<TxDetailRecordV1>,
+) -> TransactionSummary {
+    let detail_available = detail
+        .as_ref()
+        .is_some_and(|detail| detail.detail_available);
+    let detail_complete = detail.as_ref().is_some_and(|detail| detail.detail_complete);
+
     TransactionSummary {
         txid: hex::encode(tx.txid),
         accepting_block_hash: tx.accepting_block_hash.map(hex::encode),
         input_count: tx.input_count,
         output_count: tx.output_count,
+        detail_available,
+        detail_complete,
+        detail: detail.map(transaction_detail),
+    }
+}
+
+fn transaction_detail(detail: TxDetailRecordV1) -> TransactionDetail {
+    TransactionDetail {
+        accepting_daa_score: detail.accepting_daa_score.to_string(),
+        accepting_timestamp: timestamp_ms_to_iso(detail.accepting_timestamp_ms),
+        version: detail.version,
+        lock_time: detail.lock_time.to_string(),
+        subnetwork_id: detail.subnetwork_id,
+        gas: detail.gas.to_string(),
+        payload_size: detail.payload.len() as u64,
+        mass: detail.mass.to_string(),
+        storage_mass: detail.storage_mass.to_string(),
+        compute_mass: detail.compute_mass.to_string(),
+        block_time: detail.block_time.to_string(),
+        inputs: detail
+            .inputs
+            .into_iter()
+            .map(|input| TransactionInput {
+                previous_txid: input.previous_txid.map(hex::encode),
+                previous_output_index: input.previous_output_index,
+                sequence: input.sequence.to_string(),
+                sig_op_count: input.sig_op_count,
+                compute_budget: input.compute_budget,
+                previous_output_resolved: input.previous_output_resolved,
+            })
+            .collect(),
+        outputs: detail
+            .outputs
+            .into_iter()
+            .map(|output| TransactionOutput {
+                output_index: output.output_index,
+                amount: output.amount.to_string(),
+                script_public_key_version: output.script_public_key_version,
+                script_public_key_type: output.script_public_key_type,
+                script_public_key_address: output.script_public_key_address,
+            })
+            .collect(),
     }
 }
 

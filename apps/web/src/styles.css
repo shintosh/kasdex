@@ -162,6 +162,55 @@ a {
   box-shadow: 0 0 0 3px rgb(15 95 85 / 14%);
 }
 
+.transaction-result {
+  display: grid;
+  gap: 18px;
+}
+
+.transaction-detail-grid {
+  border-top: 1px solid #edf1ed;
+  display: grid;
+  gap: 18px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding-top: 16px;
+}
+
+.transaction-detail-grid h3 {
+  color: #344039;
+  font-size: 0.88rem;
+  letter-spacing: 0;
+  margin: 0 0 10px;
+}
+
+.transaction-io-list {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.transaction-io-list li {
+  border-top: 1px solid #edf1ed;
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding-top: 8px;
+}
+
+.transaction-io-list span {
+  color: #17201a;
+  font-weight: 650;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.transaction-io-list small {
+  color: #66716a;
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 760px) {
   .topbar,
   .dashboard-grid {
@@ -171,5 +220,9 @@ a {
   .topbar {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .transaction-detail-grid {
+    grid-template-columns: 1fr;
   }
 }
