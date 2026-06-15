@@ -1075,6 +1075,7 @@ dependencies = [
  "chrono",
  "hex",
  "kasdex-core",
+ "kasdex-indexer",
  "kasdex-store",
  "serde",
  "serde_json",
@@ -1117,6 +1118,7 @@ dependencies = [
 name = "kasdex-indexer"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "hex",
  "kasdex-node",
  "kasdex-store",

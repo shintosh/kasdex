@@ -11,6 +11,7 @@ axum.workspace = true
 chrono.workspace = true
 hex.workspace = true
 kasdex-core = { path = "../kasdex-core" }
+kasdex-indexer = { path = "../kasdex-indexer" }
 kasdex-store = { path = "../kasdex-store" }
 serde.workspace = true
 serde_json.workspace = true

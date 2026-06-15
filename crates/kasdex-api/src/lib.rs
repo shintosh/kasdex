@@ -11,6 +11,7 @@ use axum::{
 pub use dto::*;
 pub use error::ApiError;
 use kasdex_core::IndexedContext;
+use kasdex_indexer::{IndexerRuntimeStatus, IndexerStatusHandle};
 use kasdex_store::{BlockSummaryRecord, ChainStore, StoreError, TxSummaryRecord};
 use tower_http::trace::TraceLayer;
 use utoipa::OpenApi;
@@ -51,12 +52,24 @@ pub fn openapi_json_pretty() -> Result<String, serde_json::Error> {
 #[derive(Clone, Default)]
 pub struct ApiState {
     store: Option<Arc<dyn ChainStore>>,
+    indexer_status: Option<IndexerStatusHandle>,
 }
 
 impl ApiState {
     pub fn with_store(store: impl ChainStore + 'static) -> Self {
         Self {
             store: Some(Arc::new(store)),
+            indexer_status: None,
+        }
+    }
+
+    pub fn with_store_and_indexer_status(
+        store: impl ChainStore + 'static,
+        indexer_status: IndexerStatusHandle,
+    ) -> Self {
+        Self {
+            store: Some(Arc::new(store)),
+            indexer_status: Some(indexer_status),
         }
     }
 }
@@ -67,6 +80,16 @@ pub fn router() -> Router {
 
 pub fn router_with_store(store: impl ChainStore + 'static) -> Router {
     router_with_state(ApiState::with_store(store))
+}
+
+pub fn router_with_store_and_indexer_status(
+    store: impl ChainStore + 'static,
+    indexer_status: IndexerStatusHandle,
+) -> Router {
+    router_with_state(ApiState::with_store_and_indexer_status(
+        store,
+        indexer_status,
+    ))
 }
 
 pub fn router_with_state(state: ApiState) -> Router {
@@ -120,29 +143,29 @@ async fn indexer_status(
             indexed_score: Some("0".to_owned()),
             virtual_daa_score: Some("0".to_owned()),
             lag_blocks: None,
+            lag_daa_score: None,
             source: "mock".to_owned(),
+            indexed_block_hash: None,
+            node_observed_at: None,
+            last_poll_started_at: None,
+            last_poll_finished_at: None,
+            last_success_at: None,
+            last_error_at: None,
+            last_error: None,
+            last_start_hash: None,
+            last_indexed_blocks: None,
+            last_indexed_transactions: None,
+            last_checkpoint_hash: None,
+            last_poll_duration_ms: None,
         }));
     };
 
     let checkpoint = store.checkpoint().map_err(store_error)?;
-    Ok(Json(match checkpoint {
-        Some(checkpoint) => IndexerStatusResponse {
-            state: "indexed".to_owned(),
-            network: checkpoint.network,
-            indexed_score: Some(checkpoint.daa_score.to_string()),
-            virtual_daa_score: None,
-            lag_blocks: None,
-            source: "rocksdb".to_owned(),
-        },
-        None => IndexerStatusResponse {
-            state: "empty".to_owned(),
-            network: "unknown".to_owned(),
-            indexed_score: None,
-            virtual_daa_score: None,
-            lag_blocks: None,
-            source: "rocksdb".to_owned(),
-        },
-    }))
+    let runtime = state
+        .indexer_status
+        .as_ref()
+        .map(IndexerStatusHandle::snapshot);
+    Ok(Json(indexer_status_response(checkpoint, runtime.as_ref())))
 }
 
 #[utoipa::path(
@@ -302,6 +325,76 @@ fn indexed_context(store: &dyn ChainStore) -> Result<IndexedContext, ApiError> {
             source: "rocksdb".to_owned(),
         },
     })
+}
+
+fn indexer_status_response(
+    checkpoint: Option<kasdex_store::Checkpoint>,
+    runtime: Option<&IndexerRuntimeStatus>,
+) -> IndexerStatusResponse {
+    let now = std::time::SystemTime::now();
+    let state = runtime
+        .map(|runtime| runtime.effective_state(now).as_str().to_owned())
+        .unwrap_or_else(|| {
+            if checkpoint.is_some() {
+                "indexed".to_owned()
+            } else {
+                "empty".to_owned()
+            }
+        });
+
+    let network = checkpoint
+        .as_ref()
+        .map(|checkpoint| checkpoint.network.clone())
+        .unwrap_or_else(|| "unknown".to_owned());
+    let indexed_score = checkpoint
+        .as_ref()
+        .map(|checkpoint| checkpoint.daa_score.to_string())
+        .or_else(|| {
+            runtime.and_then(|runtime| {
+                runtime
+                    .last_checkpoint_daa_score
+                    .map(|score| score.to_string())
+            })
+        });
+    let indexed_block_hash = checkpoint
+        .as_ref()
+        .map(|checkpoint| hex::encode(checkpoint.block_hash));
+
+    IndexerStatusResponse {
+        state,
+        network,
+        indexed_score,
+        virtual_daa_score: runtime
+            .and_then(|runtime| runtime.node_virtual_daa_score)
+            .map(|score| score.to_string()),
+        lag_blocks: None,
+        lag_daa_score: runtime
+            .and_then(|runtime| runtime.lag_daa_score)
+            .map(|lag| lag.to_string()),
+        source: "rocksdb".to_owned(),
+        indexed_block_hash,
+        node_observed_at: runtime.and_then(|runtime| system_time_rfc3339(runtime.node_observed_at)),
+        last_poll_started_at: runtime
+            .and_then(|runtime| system_time_rfc3339(runtime.last_poll_started_at)),
+        last_poll_finished_at: runtime
+            .and_then(|runtime| system_time_rfc3339(runtime.last_poll_finished_at)),
+        last_success_at: runtime.and_then(|runtime| system_time_rfc3339(runtime.last_success_at)),
+        last_error_at: runtime.and_then(|runtime| system_time_rfc3339(runtime.last_error_at)),
+        last_error: runtime.and_then(|runtime| runtime.last_error.clone()),
+        last_start_hash: runtime.and_then(|runtime| runtime.last_start_hash.clone()),
+        last_indexed_blocks: runtime
+            .and_then(|runtime| runtime.last_indexed_blocks)
+            .map(|count| count as u64),
+        last_indexed_transactions: runtime
+            .and_then(|runtime| runtime.last_indexed_transactions)
+            .map(|count| count as u64),
+        last_checkpoint_hash: runtime.and_then(|runtime| runtime.last_checkpoint_hash.clone()),
+        last_poll_duration_ms: runtime.and_then(|runtime| runtime.last_poll_duration_ms),
+    }
+}
+
+fn system_time_rfc3339(time: Option<std::time::SystemTime>) -> Option<String> {
+    time.map(|time| chrono::DateTime::<chrono::Utc>::from(time).to_rfc3339())
 }
 
 fn block_summary(block: BlockSummaryRecord) -> BlockSummary {

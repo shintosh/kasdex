@@ -137,9 +137,25 @@ export interface components {
             virtual_daa_score?: string | null;
         };
         IndexerStatusResponse: {
+            indexed_block_hash?: string | null;
             indexed_score?: string | null;
             lag_blocks?: string | null;
+            lag_daa_score?: string | null;
+            last_checkpoint_hash?: string | null;
+            last_error?: string | null;
+            last_error_at?: string | null;
+            /** Format: int64 */
+            last_indexed_blocks?: number | null;
+            /** Format: int64 */
+            last_indexed_transactions?: number | null;
+            /** Format: int64 */
+            last_poll_duration_ms?: number | null;
+            last_poll_finished_at?: string | null;
+            last_poll_started_at?: string | null;
+            last_start_hash?: string | null;
+            last_success_at?: string | null;
             network: string;
+            node_observed_at?: string | null;
             source: string;
             state: string;
             virtual_daa_score?: string | null;

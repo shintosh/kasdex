@@ -3,6 +3,7 @@ use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use anyhow::Context;
 use axum::Router;
 use clap::{Parser, Subcommand};
+use kasdex_indexer::{IndexerRuntimeConfig, IndexerStatusHandle};
 use tokio::{net::TcpListener, signal, time};
 use tower_http::services::{ServeDir, ServeFile};
 use tracing::info;
@@ -32,6 +33,12 @@ enum Command {
         index_limit_blocks: usize,
         #[arg(long, default_value_t = 5)]
         index_interval_secs: u64,
+        #[arg(long, default_value_t = 1_000)]
+        index_tail_lag_threshold: u64,
+        #[arg(long, default_value_t = 120)]
+        index_stalled_after_secs: u64,
+        #[arg(long, default_value_t = 120)]
+        index_stale_after_secs: u64,
     },
     Openapi {
         #[arg(long)]
@@ -78,8 +85,11 @@ async fn main() -> anyhow::Result<()> {
             index_rpc_url,
             index_limit_blocks,
             index_interval_secs,
+            index_tail_lag_threshold,
+            index_stalled_after_secs,
+            index_stale_after_secs,
         } => {
-            serve(
+            serve(ServeConfig {
                 listen,
                 data_dir,
                 web_dir,
@@ -87,7 +97,10 @@ async fn main() -> anyhow::Result<()> {
                 index_rpc_url,
                 index_limit_blocks,
                 index_interval_secs,
-            )
+                index_tail_lag_threshold,
+                index_stalled_after_secs,
+                index_stale_after_secs,
+            })
             .await
         }
         Command::Openapi { output } => write_openapi(output),
@@ -115,7 +128,8 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
-async fn serve(
+#[derive(Debug)]
+struct ServeConfig {
     listen: SocketAddr,
     data_dir: PathBuf,
     web_dir: PathBuf,
@@ -123,31 +137,49 @@ async fn serve(
     index_rpc_url: String,
     index_limit_blocks: usize,
     index_interval_secs: u64,
-) -> anyhow::Result<()> {
+    index_tail_lag_threshold: u64,
+    index_stalled_after_secs: u64,
+    index_stale_after_secs: u64,
+}
+
+async fn serve(config: ServeConfig) -> anyhow::Result<()> {
     let store = Arc::new(
-        kasdex_store_rocks::RocksStore::open(&data_dir)
-            .with_context(|| format!("failed to open index store at {}", data_dir.display()))?,
+        kasdex_store_rocks::RocksStore::open(&config.data_dir).with_context(|| {
+            format!(
+                "failed to open index store at {}",
+                config.data_dir.display()
+            )
+        })?,
     );
-    if index_follow {
+    let indexer_status = IndexerStatusHandle::new(IndexerRuntimeConfig {
+        tail_lag_threshold: config.index_tail_lag_threshold,
+        stalled_after: time::Duration::from_secs(config.index_stalled_after_secs),
+        stale_after: time::Duration::from_secs(config.index_stale_after_secs),
+    });
+    if config.index_follow {
         spawn_indexer(
             Arc::clone(&store),
-            index_rpc_url,
-            index_limit_blocks,
-            index_interval_secs,
+            indexer_status.clone(),
+            config.index_rpc_url,
+            config.index_limit_blocks,
+            config.index_interval_secs,
         );
     }
 
-    let listener = TcpListener::bind(listen)
+    let listener = TcpListener::bind(config.listen)
         .await
-        .with_context(|| format!("failed to bind {listen}"))?;
+        .with_context(|| format!("failed to bind {}", config.listen))?;
     info!(
-        %listen,
-        data_dir = %data_dir.display(),
-        index_follow,
+        listen = %config.listen,
+        data_dir = %config.data_dir.display(),
+        index_follow = config.index_follow,
         "serving kasdex api"
     );
 
-    let app = attach_web(kasdex_api::router_with_store(store), &web_dir);
+    let app = attach_web(
+        kasdex_api::router_with_store_and_indexer_status(store, indexer_status),
+        &config.web_dir,
+    );
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
@@ -171,34 +203,56 @@ fn attach_web(app: Router, web_dir: &PathBuf) -> Router {
 
 fn spawn_indexer(
     store: Arc<kasdex_store_rocks::RocksStore>,
+    status: IndexerStatusHandle,
     rpc_url: String,
     limit_blocks: usize,
     interval_secs: u64,
 ) {
     tokio::spawn(async move {
         loop {
-            match kasdex_indexer::run_bounded_backfill(
-                &store,
-                kasdex_indexer::BackfillConfig {
-                    rpc_url: rpc_url.clone(),
-                    limit_blocks,
-                    start_hash: None,
-                },
-            )
-            .await
-            {
-                Ok(report) => {
+            let poll_store = Arc::clone(&store);
+            let poll_status = status.clone();
+            let poll_rpc_url = rpc_url.clone();
+            let started_at = std::time::SystemTime::now();
+            poll_status.mark_poll_started(started_at);
+
+            let poll = tokio::spawn(async move {
+                kasdex_indexer::run_bounded_backfill(
+                    &poll_store,
+                    kasdex_indexer::BackfillConfig {
+                        rpc_url: poll_rpc_url,
+                        limit_blocks,
+                        start_hash: None,
+                    },
+                )
+                .await
+            });
+
+            match poll.await {
+                Ok(Ok(report)) => {
+                    let finished_at = std::time::SystemTime::now();
+                    status.mark_poll_success(&report, started_at, finished_at);
                     info!(
                         network = %report.network,
                         start_hash = %report.start_hash,
                         indexed_blocks = report.indexed_blocks,
                         indexed_transactions = report.indexed_transactions,
+                        virtual_daa_score = report.virtual_daa_score,
                         checkpoint_daa_score = ?report.checkpoint_daa_score,
                         "indexer poll completed"
                     );
                 }
-                Err(err) => {
+                Ok(Err(err)) => {
+                    status.mark_poll_error(&err, Some(started_at), std::time::SystemTime::now());
                     tracing::warn!(error = %err, "indexer poll failed");
+                }
+                Err(err) => {
+                    status.mark_poll_error(
+                        format!("indexer task failed: {err}"),
+                        Some(started_at),
+                        std::time::SystemTime::now(),
+                    );
+                    tracing::warn!(error = %err, "indexer task failed");
                 }
             }
 
@@ -274,6 +328,7 @@ async fn index(
                 "fetched_chain_blocks": report.fetched_chain_blocks,
                 "indexed_blocks": report.indexed_blocks,
                 "indexed_transactions": report.indexed_transactions,
+                "virtual_daa_score": report.virtual_daa_score,
                 "checkpoint_daa_score": report.checkpoint_daa_score,
                 "checkpoint_hash": report.checkpoint_hash,
             }))?

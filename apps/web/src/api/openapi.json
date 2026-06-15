@@ -379,6 +379,12 @@
           "source"
         ],
         "properties": {
+          "indexed_block_hash": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "indexed_score": {
             "type": [
               "string",
@@ -391,8 +397,86 @@
               "null"
             ]
           },
+          "lag_daa_score": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_checkpoint_hash": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_error_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_indexed_blocks": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "last_indexed_transactions": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "last_poll_duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "last_poll_finished_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_poll_started_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_start_hash": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_success_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "network": {
             "type": "string"
+          },
+          "node_observed_at": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "source": {
             "type": "string"

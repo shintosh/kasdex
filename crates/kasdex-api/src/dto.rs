@@ -15,7 +15,20 @@ pub struct IndexerStatusResponse {
     pub indexed_score: Option<String>,
     pub virtual_daa_score: Option<String>,
     pub lag_blocks: Option<String>,
+    pub lag_daa_score: Option<String>,
     pub source: String,
+    pub indexed_block_hash: Option<String>,
+    pub node_observed_at: Option<String>,
+    pub last_poll_started_at: Option<String>,
+    pub last_poll_finished_at: Option<String>,
+    pub last_success_at: Option<String>,
+    pub last_error_at: Option<String>,
+    pub last_error: Option<String>,
+    pub last_start_hash: Option<String>,
+    pub last_indexed_blocks: Option<u64>,
+    pub last_indexed_transactions: Option<u64>,
+    pub last_checkpoint_hash: Option<String>,
+    pub last_poll_duration_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
