@@ -1,8 +1,10 @@
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
 use anyhow::Context;
+use axum::Router;
 use clap::{Parser, Subcommand};
 use tokio::{net::TcpListener, signal, time};
+use tower_http::services::{ServeDir, ServeFile};
 use tracing::info;
 use tracing_subscriber::{EnvFilter, fmt};
 
@@ -20,6 +22,8 @@ enum Command {
         listen: SocketAddr,
         #[arg(long, default_value = ".kasdex/index")]
         data_dir: PathBuf,
+        #[arg(long, default_value = "apps/web/dist")]
+        web_dir: PathBuf,
         #[arg(long)]
         index_follow: bool,
         #[arg(long, default_value = "http://127.0.0.1:16110")]
@@ -69,6 +73,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Serve {
             listen,
             data_dir,
+            web_dir,
             index_follow,
             index_rpc_url,
             index_limit_blocks,
@@ -77,6 +82,7 @@ async fn main() -> anyhow::Result<()> {
             serve(
                 listen,
                 data_dir,
+                web_dir,
                 index_follow,
                 index_rpc_url,
                 index_limit_blocks,
@@ -112,6 +118,7 @@ async fn main() -> anyhow::Result<()> {
 async fn serve(
     listen: SocketAddr,
     data_dir: PathBuf,
+    web_dir: PathBuf,
     index_follow: bool,
     index_rpc_url: String,
     index_limit_blocks: usize,
@@ -140,10 +147,26 @@ async fn serve(
         "serving kasdex api"
     );
 
-    axum::serve(listener, kasdex_api::router_with_store(store))
+    let app = attach_web(kasdex_api::router_with_store(store), &web_dir);
+
+    axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await
         .context("api server failed")
+}
+
+fn attach_web(app: Router, web_dir: &PathBuf) -> Router {
+    let index = web_dir.join("index.html");
+    if !index.is_file() {
+        tracing::warn!(
+            web_dir = %web_dir.display(),
+            "web build directory missing; serving API only"
+        );
+        return app;
+    }
+
+    info!(web_dir = %web_dir.display(), "serving dashboard web app");
+    app.fallback_service(ServeDir::new(web_dir).not_found_service(ServeFile::new(index)))
 }
 
 fn spawn_indexer(
