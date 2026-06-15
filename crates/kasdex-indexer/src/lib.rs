@@ -46,9 +46,14 @@ pub async fn run_bounded_backfill<S: ChainStore>(
 ) -> IndexerResult<BackfillReport> {
     let mut node = GrpcKaspaNode::connect(config.rpc_url).await?;
     let dag = node.get_block_dag_info().await?;
-    let start_hash = config
-        .start_hash
-        .unwrap_or_else(|| dag.pruning_point_hash.clone());
+    let stored_checkpoint = store.checkpoint()?;
+    let start_hash = select_start_hash(
+        config.start_hash.as_deref(),
+        stored_checkpoint
+            .as_ref()
+            .map(|checkpoint| checkpoint.block_hash),
+        &dag.pruning_point_hash,
+    );
     let virtual_chain = node
         .get_virtual_chain_from_block(start_hash.clone(), true)
         .await?;
@@ -116,6 +121,17 @@ pub async fn run_bounded_backfill<S: ChainStore>(
     })
 }
 
+fn select_start_hash(
+    configured_start_hash: Option<&str>,
+    checkpoint_hash: Option<[u8; 32]>,
+    pruning_point_hash: &str,
+) -> String {
+    configured_start_hash
+        .map(str::to_owned)
+        .or_else(|| checkpoint_hash.map(hex::encode))
+        .unwrap_or_else(|| pruning_point_hash.to_owned())
+}
+
 fn parse_hash(hash: &str) -> IndexerResult<[u8; 32]> {
     let bytes = hex::decode(hash).map_err(|_| IndexerError::InvalidHash(hash.to_owned()))?;
     bytes
@@ -146,5 +162,26 @@ mod tests {
         assert!(
             parse_hash("zz0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f").is_err()
         );
+    }
+
+    #[test]
+    fn selects_configured_start_hash_first() {
+        assert_eq!(
+            select_start_hash(Some("configured"), Some([7; 32]), "pruning"),
+            "configured"
+        );
+    }
+
+    #[test]
+    fn selects_checkpoint_before_pruning_point() {
+        assert_eq!(
+            select_start_hash(None, Some([7; 32]), "pruning"),
+            hex::encode([7; 32])
+        );
+    }
+
+    #[test]
+    fn selects_pruning_point_for_empty_store() {
+        assert_eq!(select_start_hash(None, None, "pruning"), "pruning");
     }
 }

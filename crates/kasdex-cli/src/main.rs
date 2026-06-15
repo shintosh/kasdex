@@ -2,7 +2,7 @@ use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
-use tokio::{net::TcpListener, signal};
+use tokio::{net::TcpListener, signal, time};
 use tracing::info;
 use tracing_subscriber::{EnvFilter, fmt};
 
@@ -38,6 +38,10 @@ enum Command {
         limit_blocks: usize,
         #[arg(long)]
         start_hash: Option<String>,
+        #[arg(long)]
+        follow: bool,
+        #[arg(long, default_value_t = 5)]
+        interval_secs: u64,
     },
 }
 
@@ -64,7 +68,19 @@ async fn main() -> anyhow::Result<()> {
             data_dir,
             limit_blocks,
             start_hash,
-        } => index_once(rpc_url, data_dir, limit_blocks, start_hash).await,
+            follow,
+            interval_secs,
+        } => {
+            index(
+                rpc_url,
+                data_dir,
+                limit_blocks,
+                start_hash,
+                follow,
+                interval_secs,
+            )
+            .await
+        }
     }
 }
 
@@ -118,36 +134,49 @@ async fn probe_node(rpc_url: String) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn index_once(
+async fn index(
     rpc_url: String,
     data_dir: PathBuf,
     limit_blocks: usize,
     start_hash: Option<String>,
+    follow: bool,
+    interval_secs: u64,
 ) -> anyhow::Result<()> {
     let store = kasdex_store_rocks::RocksStore::open(&data_dir)?;
-    let report = kasdex_indexer::run_bounded_backfill(
-        &store,
-        kasdex_indexer::BackfillConfig {
-            rpc_url,
-            limit_blocks,
-            start_hash,
-        },
-    )
-    .await?;
+    let mut configured_start_hash = start_hash;
 
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&serde_json::json!({
-            "data_dir": data_dir,
-            "network": report.network,
-            "start_hash": report.start_hash,
-            "fetched_chain_blocks": report.fetched_chain_blocks,
-            "indexed_blocks": report.indexed_blocks,
-            "indexed_transactions": report.indexed_transactions,
-            "checkpoint_daa_score": report.checkpoint_daa_score,
-            "checkpoint_hash": report.checkpoint_hash,
-        }))?
-    );
+    loop {
+        let report = kasdex_indexer::run_bounded_backfill(
+            &store,
+            kasdex_indexer::BackfillConfig {
+                rpc_url: rpc_url.clone(),
+                limit_blocks,
+                start_hash: configured_start_hash.take(),
+            },
+        )
+        .await?;
+
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "data_dir": data_dir,
+                "network": report.network,
+                "start_hash": report.start_hash,
+                "fetched_chain_blocks": report.fetched_chain_blocks,
+                "indexed_blocks": report.indexed_blocks,
+                "indexed_transactions": report.indexed_transactions,
+                "checkpoint_daa_score": report.checkpoint_daa_score,
+                "checkpoint_hash": report.checkpoint_hash,
+            }))?
+        );
+
+        if !follow {
+            break;
+        }
+
+        time::sleep(time::Duration::from_secs(interval_secs)).await;
+    }
+
     Ok(())
 }
 
