@@ -35,7 +35,8 @@ impl IndexerState {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IndexerRuntimeConfig {
-    pub tail_lag_threshold: u64,
+    pub tail_enter_lag_threshold: u64,
+    pub tail_exit_lag_threshold: u64,
     pub stalled_after: Duration,
     pub stale_after: Duration,
 }
@@ -43,20 +44,22 @@ pub struct IndexerRuntimeConfig {
 impl Default for IndexerRuntimeConfig {
     fn default() -> Self {
         Self {
-            tail_lag_threshold: 1_000,
+            tail_enter_lag_threshold: 1_000,
+            tail_exit_lag_threshold: 2_000,
             stalled_after: Duration::from_secs(120),
             stale_after: Duration::from_secs(120),
         }
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct IndexerRuntimeStatus {
     pub state: IndexerState,
     pub config: IndexerRuntimeConfig,
     pub node_virtual_daa_score: Option<u64>,
     pub node_observed_at: Option<SystemTime>,
     pub lag_daa_score: Option<u64>,
+    pub current_poll_started_at: Option<SystemTime>,
     pub last_poll_started_at: Option<SystemTime>,
     pub last_poll_finished_at: Option<SystemTime>,
     pub last_success_at: Option<SystemTime>,
@@ -68,6 +71,8 @@ pub struct IndexerRuntimeStatus {
     pub last_checkpoint_daa_score: Option<u64>,
     pub last_checkpoint_hash: Option<String>,
     pub last_poll_duration_ms: Option<u64>,
+    pub last_blocks_per_second: Option<f64>,
+    pub last_transactions_per_second: Option<f64>,
 }
 
 impl IndexerRuntimeStatus {
@@ -78,6 +83,7 @@ impl IndexerRuntimeStatus {
             node_virtual_daa_score: None,
             node_observed_at: None,
             lag_daa_score: None,
+            current_poll_started_at: None,
             last_poll_started_at: None,
             last_poll_finished_at: None,
             last_success_at: None,
@@ -89,6 +95,8 @@ impl IndexerRuntimeStatus {
             last_checkpoint_daa_score: None,
             last_checkpoint_hash: None,
             last_poll_duration_ms: None,
+            last_blocks_per_second: None,
+            last_transactions_per_second: None,
         }
     }
 
@@ -148,7 +156,7 @@ impl IndexerStatusHandle {
     pub fn mark_poll_started(&self, started_at: SystemTime) {
         let mut status = self.inner.write().expect("indexer status lock poisoned");
         status.state = IndexerState::Backfilling;
-        status.last_poll_started_at = Some(started_at);
+        status.current_poll_started_at = Some(started_at);
     }
 
     pub fn mark_poll_success(
@@ -164,17 +172,33 @@ impl IndexerStatusHandle {
         let lag_daa_score = report
             .checkpoint_daa_score
             .map(|indexed| report.virtual_daa_score.saturating_sub(indexed));
-        let state = match lag_daa_score {
-            Some(lag) if lag <= self.snapshot().config.tail_lag_threshold => IndexerState::Tailing,
-            Some(_) => IndexerState::Backfilling,
-            None => IndexerState::Empty,
+        let snapshot = self.snapshot();
+        let state = match (snapshot.state, lag_daa_score) {
+            (IndexerState::Tailing, Some(lag))
+                if lag <= snapshot.config.tail_exit_lag_threshold =>
+            {
+                IndexerState::Tailing
+            }
+            (_, Some(lag)) if lag <= snapshot.config.tail_enter_lag_threshold => {
+                IndexerState::Tailing
+            }
+            (_, Some(_)) => IndexerState::Backfilling,
+            (_, None) => IndexerState::Empty,
         };
+        let duration_secs = duration_ms.map(|duration_ms| duration_ms as f64 / 1_000.0);
+        let blocks_per_second = duration_secs
+            .filter(|duration_secs| *duration_secs > 0.0)
+            .map(|duration_secs| report.indexed_blocks as f64 / duration_secs);
+        let transactions_per_second = duration_secs
+            .filter(|duration_secs| *duration_secs > 0.0)
+            .map(|duration_secs| report.indexed_transactions as f64 / duration_secs);
 
         let mut status = self.inner.write().expect("indexer status lock poisoned");
         status.state = state;
         status.node_virtual_daa_score = Some(report.virtual_daa_score);
         status.node_observed_at = Some(finished_at);
         status.lag_daa_score = lag_daa_score;
+        status.current_poll_started_at = None;
         status.last_poll_started_at = Some(started_at);
         status.last_poll_finished_at = Some(finished_at);
         status.last_success_at = Some(finished_at);
@@ -184,6 +208,8 @@ impl IndexerStatusHandle {
         status.last_checkpoint_daa_score = report.checkpoint_daa_score;
         status.last_checkpoint_hash = report.checkpoint_hash.clone();
         status.last_poll_duration_ms = duration_ms;
+        status.last_blocks_per_second = blocks_per_second;
+        status.last_transactions_per_second = transactions_per_second;
         status.last_error = None;
     }
 
@@ -195,6 +221,7 @@ impl IndexerStatusHandle {
     ) {
         let mut status = self.inner.write().expect("indexer status lock poisoned");
         status.state = IndexerState::Error;
+        status.current_poll_started_at = None;
         if let Some(started_at) = started_at {
             status.last_poll_started_at = Some(started_at);
         }

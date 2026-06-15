@@ -66,6 +66,13 @@ export function IndexerStatusPanel() {
           <dd>{formatDuration(status.data.last_poll_duration_ms)}</dd>
         </div>
         <div>
+          <dt>Throughput</dt>
+          <dd>
+            {formatRate(status.data.last_blocks_per_second)} blocks/s ·{' '}
+            {formatRate(status.data.last_transactions_per_second)} tx/s
+          </dd>
+        </div>
+        <div>
           <dt>Source</dt>
           <dd>{status.data.source}</dd>
         </div>
@@ -101,4 +108,16 @@ function formatDuration(value?: number | null) {
   }
 
   return `${(value / 1000).toFixed(1)} s`;
+}
+
+function formatRate(value?: number | null) {
+  if (value == null) {
+    return 'unknown';
+  }
+
+  if (value >= 100) {
+    return value.toFixed(0);
+  }
+
+  return value.toFixed(1);
 }

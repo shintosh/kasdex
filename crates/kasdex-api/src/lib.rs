@@ -157,6 +157,8 @@ async fn indexer_status(
             last_indexed_transactions: None,
             last_checkpoint_hash: None,
             last_poll_duration_ms: None,
+            last_blocks_per_second: None,
+            last_transactions_per_second: None,
         }));
     };
 
@@ -390,6 +392,9 @@ fn indexer_status_response(
             .map(|count| count as u64),
         last_checkpoint_hash: runtime.and_then(|runtime| runtime.last_checkpoint_hash.clone()),
         last_poll_duration_ms: runtime.and_then(|runtime| runtime.last_poll_duration_ms),
+        last_blocks_per_second: runtime.and_then(|runtime| runtime.last_blocks_per_second),
+        last_transactions_per_second: runtime
+            .and_then(|runtime| runtime.last_transactions_per_second),
     }
 }
 

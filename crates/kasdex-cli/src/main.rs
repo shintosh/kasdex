@@ -35,10 +35,14 @@ enum Command {
         index_interval_secs: u64,
         #[arg(long, default_value_t = 1_000)]
         index_tail_lag_threshold: u64,
+        #[arg(long, default_value_t = 2_000)]
+        index_tail_exit_lag_threshold: u64,
         #[arg(long, default_value_t = 120)]
         index_stalled_after_secs: u64,
         #[arg(long, default_value_t = 120)]
         index_stale_after_secs: u64,
+        #[arg(long, default_value_t = 60)]
+        index_poll_timeout_secs: u64,
     },
     Openapi {
         #[arg(long)]
@@ -86,8 +90,10 @@ async fn main() -> anyhow::Result<()> {
             index_limit_blocks,
             index_interval_secs,
             index_tail_lag_threshold,
+            index_tail_exit_lag_threshold,
             index_stalled_after_secs,
             index_stale_after_secs,
+            index_poll_timeout_secs,
         } => {
             serve(ServeConfig {
                 listen,
@@ -98,8 +104,10 @@ async fn main() -> anyhow::Result<()> {
                 index_limit_blocks,
                 index_interval_secs,
                 index_tail_lag_threshold,
+                index_tail_exit_lag_threshold,
                 index_stalled_after_secs,
                 index_stale_after_secs,
+                index_poll_timeout_secs,
             })
             .await
         }
@@ -138,8 +146,10 @@ struct ServeConfig {
     index_limit_blocks: usize,
     index_interval_secs: u64,
     index_tail_lag_threshold: u64,
+    index_tail_exit_lag_threshold: u64,
     index_stalled_after_secs: u64,
     index_stale_after_secs: u64,
+    index_poll_timeout_secs: u64,
 }
 
 async fn serve(config: ServeConfig) -> anyhow::Result<()> {
@@ -152,7 +162,8 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
         })?,
     );
     let indexer_status = IndexerStatusHandle::new(IndexerRuntimeConfig {
-        tail_lag_threshold: config.index_tail_lag_threshold,
+        tail_enter_lag_threshold: config.index_tail_lag_threshold,
+        tail_exit_lag_threshold: config.index_tail_exit_lag_threshold,
         stalled_after: time::Duration::from_secs(config.index_stalled_after_secs),
         stale_after: time::Duration::from_secs(config.index_stale_after_secs),
     });
@@ -163,6 +174,7 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
             config.index_rpc_url,
             config.index_limit_blocks,
             config.index_interval_secs,
+            config.index_poll_timeout_secs,
         );
     }
 
@@ -207,6 +219,7 @@ fn spawn_indexer(
     rpc_url: String,
     limit_blocks: usize,
     interval_secs: u64,
+    poll_timeout_secs: u64,
 ) {
     tokio::spawn(async move {
         loop {
@@ -217,24 +230,28 @@ fn spawn_indexer(
             poll_status.mark_poll_started(started_at);
 
             let poll = tokio::spawn(async move {
-                kasdex_indexer::run_bounded_backfill(
-                    &poll_store,
-                    kasdex_indexer::BackfillConfig {
-                        rpc_url: poll_rpc_url,
-                        limit_blocks,
-                        start_hash: None,
-                    },
+                time::timeout(
+                    time::Duration::from_secs(poll_timeout_secs),
+                    kasdex_indexer::run_bounded_backfill(
+                        &poll_store,
+                        kasdex_indexer::BackfillConfig {
+                            rpc_url: poll_rpc_url,
+                            limit_blocks,
+                            start_hash: None,
+                        },
+                    ),
                 )
                 .await
             });
 
             match poll.await {
-                Ok(Ok(report)) => {
+                Ok(Ok(Ok(report))) => {
                     let finished_at = std::time::SystemTime::now();
                     status.mark_poll_success(&report, started_at, finished_at);
                     info!(
                         network = %report.network,
                         start_hash = %report.start_hash,
+                        requested_blocks = limit_blocks,
                         indexed_blocks = report.indexed_blocks,
                         indexed_transactions = report.indexed_transactions,
                         virtual_daa_score = report.virtual_daa_score,
@@ -242,9 +259,18 @@ fn spawn_indexer(
                         "indexer poll completed"
                     );
                 }
-                Ok(Err(err)) => {
+                Ok(Ok(Err(err))) => {
                     status.mark_poll_error(&err, Some(started_at), std::time::SystemTime::now());
                     tracing::warn!(error = %err, "indexer poll failed");
+                }
+                Ok(Err(_elapsed)) => {
+                    let error = format!("indexer poll timed out after {poll_timeout_secs}s");
+                    status.mark_poll_error(
+                        error.clone(),
+                        Some(started_at),
+                        std::time::SystemTime::now(),
+                    );
+                    tracing::warn!(error = %error, "indexer poll timed out");
                 }
                 Err(err) => {
                     status.mark_poll_error(

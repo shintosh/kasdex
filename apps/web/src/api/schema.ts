@@ -141,6 +141,8 @@ export interface components {
             indexed_score?: string | null;
             lag_blocks?: string | null;
             lag_daa_score?: string | null;
+            /** Format: double */
+            last_blocks_per_second?: number | null;
             last_checkpoint_hash?: string | null;
             last_error?: string | null;
             last_error_at?: string | null;
@@ -154,6 +156,8 @@ export interface components {
             last_poll_started_at?: string | null;
             last_start_hash?: string | null;
             last_success_at?: string | null;
+            /** Format: double */
+            last_transactions_per_second?: number | null;
             network: string;
             node_observed_at?: string | null;
             source: string;

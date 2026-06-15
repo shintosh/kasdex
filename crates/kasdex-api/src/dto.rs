@@ -29,6 +29,8 @@ pub struct IndexerStatusResponse {
     pub last_indexed_transactions: Option<u64>,
     pub last_checkpoint_hash: Option<String>,
     pub last_poll_duration_ms: Option<u64>,
+    pub last_blocks_per_second: Option<f64>,
+    pub last_transactions_per_second: Option<f64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
