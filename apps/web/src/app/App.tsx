@@ -1,5 +1,6 @@
 import { IndexerStatusPanel } from '../features/indexer/IndexerStatusPanel';
 import { RecentBlocks } from '../features/dashboard/RecentBlocks';
+import { TransactionBrowser } from '../features/transactions/TransactionBrowser';
 
 export function App() {
   return (
@@ -17,6 +18,7 @@ export function App() {
       <section class="dashboard-grid">
         <IndexerStatusPanel />
         <RecentBlocks />
+        <TransactionBrowser />
       </section>
     </main>
   );

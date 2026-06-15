@@ -137,6 +137,31 @@ a {
   flex: 0 0 auto;
 }
 
+.transaction-browser {
+  grid-column: 1 / -1;
+}
+
+.transaction-browser form {
+  margin-bottom: 14px;
+}
+
+.transaction-browser input {
+  background: #fbfcfb;
+  border: 1px solid #cfd9d1;
+  border-radius: 6px;
+  color: #17201a;
+  font: inherit;
+  min-height: 40px;
+  outline: none;
+  padding: 8px 10px;
+  width: 100%;
+}
+
+.transaction-browser input:focus {
+  border-color: #0f5f55;
+  box-shadow: 0 0 0 3px rgb(15 95 85 / 14%);
+}
+
 @media (max-width: 760px) {
   .topbar,
   .dashboard-grid {
