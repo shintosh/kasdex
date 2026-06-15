@@ -7,3 +7,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+hex.workspace = true
+kasdex-node = { path = "../kasdex-node" }
+kasdex-store = { path = "../kasdex-store" }
+thiserror.workspace = true

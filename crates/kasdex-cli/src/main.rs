@@ -27,6 +27,16 @@ enum Command {
         #[command(subcommand)]
         command: NodeCommand,
     },
+    Index {
+        #[arg(long, default_value = "http://127.0.0.1:16110")]
+        rpc_url: String,
+        #[arg(long, default_value = ".kasdex/index")]
+        data_dir: PathBuf,
+        #[arg(long, default_value_t = 100)]
+        limit_blocks: usize,
+        #[arg(long)]
+        start_hash: Option<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -47,6 +57,12 @@ async fn main() -> anyhow::Result<()> {
         Command::Node { command } => match command {
             NodeCommand::Probe { rpc_url } => probe_node(rpc_url).await,
         },
+        Command::Index {
+            rpc_url,
+            data_dir,
+            limit_blocks,
+            start_hash,
+        } => index_once(rpc_url, data_dir, limit_blocks, start_hash).await,
     }
 }
 
@@ -93,6 +109,39 @@ async fn probe_node(rpc_url: String) -> anyhow::Result<()> {
             "virtual_chain_added": status.virtual_chain_added,
             "accepted_transaction_batches": status.accepted_transaction_batches,
             "sink_block_transaction_count": status.sink_block_transaction_count,
+        }))?
+    );
+    Ok(())
+}
+
+async fn index_once(
+    rpc_url: String,
+    data_dir: PathBuf,
+    limit_blocks: usize,
+    start_hash: Option<String>,
+) -> anyhow::Result<()> {
+    let store = kasdex_store_rocks::RocksStore::open(&data_dir)?;
+    let report = kasdex_indexer::run_bounded_backfill(
+        &store,
+        kasdex_indexer::BackfillConfig {
+            rpc_url,
+            limit_blocks,
+            start_hash,
+        },
+    )
+    .await?;
+
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&serde_json::json!({
+            "data_dir": data_dir,
+            "network": report.network,
+            "start_hash": report.start_hash,
+            "fetched_chain_blocks": report.fetched_chain_blocks,
+            "indexed_blocks": report.indexed_blocks,
+            "indexed_transactions": report.indexed_transactions,
+            "checkpoint_daa_score": report.checkpoint_daa_score,
+            "checkpoint_hash": report.checkpoint_hash,
         }))?
     );
     Ok(())

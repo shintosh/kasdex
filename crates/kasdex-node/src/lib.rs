@@ -137,7 +137,7 @@ impl GrpcKaspaNode {
         }
     }
 
-    async fn get_block_dag_info(&mut self) -> NodeResult<GetBlockDagInfoResponseMessage> {
+    pub async fn get_block_dag_info(&mut self) -> NodeResult<GetBlockDagInfoResponseMessage> {
         let id = self
             .send(kaspad_request::Payload::GetBlockDagInfoRequest(
                 GetBlockDagInfoRequestMessage {},
@@ -152,7 +152,7 @@ impl GrpcKaspaNode {
         }
     }
 
-    async fn get_virtual_chain_from_block(
+    pub async fn get_virtual_chain_from_block(
         &mut self,
         start_hash: String,
         include_accepted_transaction_ids: bool,
@@ -175,7 +175,7 @@ impl GrpcKaspaNode {
         }
     }
 
-    async fn get_block(
+    pub async fn get_block(
         &mut self,
         hash: String,
         include_transactions: bool,
