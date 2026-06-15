@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     sync::{Arc, RwLock},
     time::{Duration, SystemTime},
 };
@@ -351,6 +352,7 @@ pub async fn run_bounded_backfill<S: ChainStore>(
         let mut outpoint_states = Vec::new();
         let mut unresolved_spends = Vec::new();
         let mut spent_outpoints = Vec::new();
+        let mut pending_outpoints = HashMap::new();
         for tx in block.transactions {
             if let Some(verbose) = tx.verbose_data.as_ref() {
                 let txid = parse_hash(&verbose.transaction_id)?;
@@ -369,7 +371,13 @@ pub async fn run_bounded_backfill<S: ChainStore>(
                     header.timestamp,
                 )?);
                 if config.index_addresses {
-                    let derived = address_index_records(store, &tx, txid, header.daa_score)?;
+                    let derived = address_index_records(
+                        store,
+                        &mut pending_outpoints,
+                        &tx,
+                        txid,
+                        header.daa_score,
+                    )?;
                     address_history.extend(derived.address_history);
                     address_utxos.extend(derived.address_utxos);
                     spent_address_utxos.extend(derived.spent_address_utxos);
@@ -614,6 +622,7 @@ struct AddressIndexRecords {
 
 fn address_index_records<S: ChainStore>(
     store: &S,
+    pending_outpoints: &mut HashMap<([u8; 32], u32), OutpointStateRecord>,
     tx: &protowire::RpcTransaction,
     txid: [u8; 32],
     daa_score: u64,
@@ -644,7 +653,7 @@ fn address_index_records<S: ChainStore>(
             amount: output.amount,
             created_daa_score: daa_score,
         });
-        records.outpoint_states.push(OutpointStateRecord {
+        let outpoint = OutpointStateRecord {
             txid,
             output_index: output_index as u32,
             amount: output.amount,
@@ -653,7 +662,9 @@ fn address_index_records<S: ChainStore>(
             created_daa_score: daa_score,
             spent_by: None,
             spent_daa_score: None,
-        });
+        };
+        pending_outpoints.insert((txid, output_index as u32), outpoint.clone());
+        records.outpoint_states.push(outpoint);
         event_index = event_index.saturating_add(1);
     }
 
@@ -665,7 +676,14 @@ fn address_index_records<S: ChainStore>(
             continue;
         };
 
-        match store.outpoint_state(&previous_txid, previous.index)? {
+        let resolved_outpoint =
+            if let Some(outpoint) = pending_outpoints.get(&(previous_txid, previous.index)) {
+                Some(outpoint.clone())
+            } else {
+                store.outpoint_state(&previous_txid, previous.index)?
+            };
+
+        match resolved_outpoint {
             Some(mut outpoint) if outpoint.spent_by.is_none() => {
                 outpoint.spent_by = Some(txid);
                 outpoint.spent_daa_score = Some(daa_score);
@@ -687,6 +705,7 @@ fn address_index_records<S: ChainStore>(
                     txid: previous_txid,
                     output_index: previous.index,
                 });
+                pending_outpoints.insert((previous_txid, previous.index), outpoint.clone());
                 records.outpoint_states.push(outpoint);
                 event_index = event_index.saturating_add(1);
             }

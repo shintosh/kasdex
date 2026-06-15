@@ -36,6 +36,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/blocks/{hash}/transactions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getBlockTransactions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/health": {
         parameters: {
             query?: never;
@@ -294,6 +310,11 @@ export interface components {
             /** Format: int32 */
             script_public_key_version: number;
         };
+        TransactionPage: {
+            indexed_context: components["schemas"]["IndexedContext"];
+            items: components["schemas"]["TransactionSummary"][];
+            next_cursor?: string | null;
+        };
         TransactionSummary: {
             accepting_block_hash?: string | null;
             detail?: null | components["schemas"]["TransactionDetail"];
@@ -377,6 +398,50 @@ export interface operations {
                 };
             };
             /** @description Block not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    getBlockTransactions: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description 32-byte block hash as hex */
+                hash: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Block transaction summaries */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransactionPage"];
+                };
+            };
+            /** @description Invalid hash or cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Block transaction effects not found */
             404: {
                 headers: {
                     [name: string]: unknown;

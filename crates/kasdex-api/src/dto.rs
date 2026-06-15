@@ -114,6 +114,13 @@ pub struct TransactionOutput {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+pub struct TransactionPage {
+    pub items: Vec<TransactionSummary>,
+    pub next_cursor: Option<String>,
+    pub indexed_context: IndexedContext,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
 pub struct ScriptHistoryEvent {
     pub script_hash: String,
     pub daa_score: String,

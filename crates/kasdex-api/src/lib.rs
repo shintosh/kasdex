@@ -31,6 +31,7 @@ const CURSOR_TYPE_RECENT_BLOCKS: u8 = 1;
         indexer_status,
         list_blocks,
         get_block,
+        get_block_transactions,
         get_transaction,
         get_script_history,
         get_script_utxos,
@@ -53,6 +54,7 @@ const CURSOR_TYPE_RECENT_BLOCKS: u8 = 1;
         TransactionDetail,
         TransactionInput,
         TransactionOutput,
+        TransactionPage,
         TransactionSummary,
         kasdex_core::IndexedContext,
     )),
@@ -123,6 +125,7 @@ pub fn router_with_state(state: ApiState) -> Router {
         .route("/indexer/status", get(indexer_status))
         .route("/blocks", get(list_blocks))
         .route("/blocks/{hash}", get(get_block))
+        .route("/blocks/{hash}/transactions", get(get_block_transactions))
         .route("/transactions/{txid}", get(get_transaction))
         .route("/scripts/{script_hash}/history", get(get_script_history))
         .route("/scripts/{script_hash}/utxos", get(get_script_utxos))
@@ -281,6 +284,64 @@ async fn get_block(
 
 #[utoipa::path(
     get,
+    path = "/api/v1/blocks/{hash}/transactions",
+    operation_id = "getBlockTransactions",
+    tag = "blocks",
+    params(
+        ("hash" = String, Path, description = "32-byte block hash as hex"),
+        PageQuery
+    ),
+    responses(
+        (status = 200, description = "Block transaction summaries", body = TransactionPage),
+        (status = 400, description = "Invalid hash or cursor", body = ApiError),
+        (status = 404, description = "Block transaction effects not found", body = ApiError)
+    )
+)]
+async fn get_block_transactions(
+    State(state): State<ApiState>,
+    Path(hash): Path<String>,
+    Query(query): Query<PageQuery>,
+) -> Result<Json<TransactionPage>, ApiError> {
+    let store = state
+        .store
+        .as_deref()
+        .ok_or_else(|| ApiError::not_found("block transactions not found"))?;
+    let hash = parse_hash(&hash)?;
+    let offset = decode_offset_cursor(query.cursor.as_deref())?;
+    let limit = query.limit.unwrap_or(25);
+    if !(1..=100).contains(&limit) {
+        return Err(ApiError::bad_request("limit must be between 1 and 100"));
+    }
+
+    let effect = store
+        .block_effect_by_hash(&hash)
+        .map_err(store_error)?
+        .ok_or_else(|| ApiError::not_found("block transaction effects not found"))?;
+    let mut items = Vec::new();
+    for txid in effect
+        .inserted_txids
+        .iter()
+        .skip(offset)
+        .take(limit as usize)
+    {
+        if let Some(tx) = store.tx_by_id(txid).map_err(store_error)? {
+            let detail = store.tx_detail_by_id(txid).map_err(store_error)?;
+            items.push(transaction_summary(tx, detail));
+        }
+    }
+    let next_offset = offset + items.len();
+    let next_cursor =
+        (next_offset < effect.inserted_txids.len()).then(|| encode_offset_cursor(next_offset));
+
+    Ok(Json(TransactionPage {
+        items,
+        next_cursor,
+        indexed_context: indexed_context(store)?,
+    }))
+}
+
+#[utoipa::path(
+    get,
     path = "/api/v1/transactions/{txid}",
     operation_id = "getTransaction",
     tag = "transactions",
@@ -427,6 +488,25 @@ fn decode_cursor(cursor: Option<&str>) -> Result<Option<Vec<u8>>, ApiError> {
         .map(hex::decode)
         .transpose()
         .map_err(|_| ApiError::bad_request("cursor must be hex encoded"))
+}
+
+fn decode_offset_cursor(cursor: Option<&str>) -> Result<usize, ApiError> {
+    let Some(bytes) = decode_cursor(cursor)? else {
+        return Ok(0);
+    };
+    if bytes.len() != 8 {
+        return Err(ApiError::bad_request("cursor is malformed"));
+    }
+    let offset = u64::from_be_bytes(
+        bytes
+            .try_into()
+            .map_err(|_| ApiError::bad_request("cursor is malformed"))?,
+    );
+    usize::try_from(offset).map_err(|_| ApiError::bad_request("cursor is too large"))
+}
+
+fn encode_offset_cursor(offset: usize) -> String {
+    hex::encode((offset as u64).to_be_bytes())
 }
 
 fn decode_block_cursor(
