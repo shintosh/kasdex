@@ -7,8 +7,10 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+bincode.workspace = true
 kasdex-store = { path = "../kasdex-store" }
 rocksdb = "0.24.0"
+serde.workspace = true
 
 [dev-dependencies]
 criterion = "0.7.0"
