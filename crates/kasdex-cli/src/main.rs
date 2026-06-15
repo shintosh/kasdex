@@ -23,6 +23,18 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    Node {
+        #[command(subcommand)]
+        command: NodeCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum NodeCommand {
+    Probe {
+        #[arg(long, default_value = "http://127.0.0.1:16110")]
+        rpc_url: String,
+    },
 }
 
 #[tokio::main]
@@ -32,6 +44,9 @@ async fn main() -> anyhow::Result<()> {
     match Cli::parse().command {
         Command::Serve { listen } => serve(listen).await,
         Command::Openapi { output } => write_openapi(output),
+        Command::Node { command } => match command {
+            NodeCommand::Probe { rpc_url } => probe_node(rpc_url).await,
+        },
     }
 }
 
@@ -55,6 +70,32 @@ fn write_openapi(output: PathBuf) -> anyhow::Result<()> {
 
     let json = kasdex_api::openapi_json_pretty().context("failed to serialize OpenAPI spec")?;
     std::fs::write(&output, json).with_context(|| format!("failed to write {}", output.display()))
+}
+
+async fn probe_node(rpc_url: String) -> anyhow::Result<()> {
+    let status = kasdex_node::GrpcKaspaNode::connect(rpc_url)
+        .await?
+        .probe()
+        .await?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&serde_json::json!({
+            "endpoint": status.endpoint,
+            "network": status.network,
+            "server_version": status.server_version,
+            "is_synced": status.is_synced,
+            "is_archival": status.is_archival,
+            "has_utxo_index": status.has_utxo_index,
+            "virtual_daa_score": status.virtual_daa_score,
+            "pruning_point_hash": status.pruning_point_hash,
+            "sink": status.sink,
+            "virtual_chain_sample_start": status.virtual_chain_sample_start,
+            "virtual_chain_added": status.virtual_chain_added,
+            "accepted_transaction_batches": status.accepted_transaction_batches,
+            "sink_block_transaction_count": status.sink_block_transaction_count,
+        }))?
+    );
+    Ok(())
 }
 
 async fn shutdown_signal() {

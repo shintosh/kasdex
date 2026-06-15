@@ -15,6 +15,8 @@ anyhow.workspace = true
 axum.workspace = true
 clap.workspace = true
 kasdex-api = { path = "../kasdex-api" }
+kasdex-node = { path = "../kasdex-node" }
+serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
