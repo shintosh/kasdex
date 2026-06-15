@@ -5,8 +5,9 @@ use std::{
 
 use kasdex_node::{GrpcKaspaNode, NodeError, protowire};
 use kasdex_store::{
-    BlockSummaryRecord, ChainStore, Checkpoint, CoverageClass, CoverageRangeRecord, StoreError,
-    TxDetailRecordV1, TxInputRecordV1, TxOutputRecordV1, TxSummaryRecord,
+    BlockEffectRecordV1, BlockSummaryRecord, ChainStore, Checkpoint, CoverageClass,
+    CoverageRangeRecord, StoreError, TxDetailRecordV1, TxInputRecordV1, TxOutputRecordV1,
+    TxSummaryRecord,
 };
 
 const DEFAULT_COVERAGE_RANGE_ID: &str = "default";
@@ -311,6 +312,7 @@ pub async fn run_bounded_backfill<S: ChainStore>(
     let mut indexed_transactions = 0_usize;
     let mut checkpoint_daa_score = None;
     let mut checkpoint_hash = None;
+    let mut current_checkpoint = stored_checkpoint.clone();
     let mut coverage = initialize_coverage_range(
         store,
         &mut node,
@@ -337,39 +339,63 @@ pub async fn run_bounded_backfill<S: ChainStore>(
             timestamp_ms: header.timestamp,
             tx_count: block.transactions.len() as u32,
         };
-        store.put_block(&block_record)?;
 
+        let mut tx_records = Vec::new();
+        let mut tx_detail_records = Vec::new();
         for tx in block.transactions {
             if let Some(verbose) = tx.verbose_data.as_ref() {
                 let txid = parse_hash(&verbose.transaction_id)?;
-                store.put_tx(&TxSummaryRecord {
+                tx_records.push(TxSummaryRecord {
                     txid,
                     accepting_block_hash: Some(block_hash),
                     input_count: tx.inputs.len() as u32,
                     output_count: tx.outputs.len() as u32,
-                })?;
-                store.put_tx_detail(&tx_detail_record(
+                });
+                tx_detail_records.push(tx_detail_record(
                     &tx,
                     verbose,
                     txid,
                     block_hash,
                     header.daa_score,
                     header.timestamp,
-                )?)?;
+                )?);
                 indexed_transactions += 1;
             }
         }
 
-        store.put_checkpoint(&Checkpoint {
+        let checkpoint = Checkpoint {
             network: dag.network_name.clone(),
             daa_score: header.daa_score,
             block_hash,
-        })?;
+        };
         coverage.end_hash = block_hash;
         coverage.end_daa_score = header.daa_score;
-        store.put_coverage_range(&coverage)?;
+        let effect = BlockEffectRecordV1 {
+            schema_version: 1,
+            block_hash,
+            daa_score: header.daa_score,
+            previous_checkpoint_hash: current_checkpoint
+                .as_ref()
+                .map(|checkpoint| checkpoint.block_hash),
+            previous_checkpoint_daa_score: current_checkpoint
+                .as_ref()
+                .map(|checkpoint| checkpoint.daa_score),
+            inserted_txids: tx_records.iter().map(|tx| tx.txid).collect(),
+            created_outpoints: Vec::new(),
+            spent_outpoints: Vec::new(),
+            address_event_keys: Vec::new(),
+        };
+        store.put_indexed_block(
+            &block_record,
+            &tx_records,
+            &tx_detail_records,
+            &effect,
+            &checkpoint,
+            &coverage,
+        )?;
         checkpoint_daa_score = Some(header.daa_score);
         checkpoint_hash = Some(header.hash);
+        current_checkpoint = Some(checkpoint);
         indexed_blocks += 1;
     }
 

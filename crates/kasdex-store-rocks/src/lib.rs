@@ -1,9 +1,9 @@
 use std::path::Path;
 
 use kasdex_store::{
-    AddressHistoryRecord, AddressUtxoRecord, BlockSummaryRecord, ChainStore, Checkpoint,
-    CoverageRangeRecord, Page, StoreError, StoreMetadata, StoreResult, TxDetailRecordV1,
-    TxSummaryRecord,
+    AddressHistoryRecord, AddressUtxoRecord, BlockEffectRecordV1, BlockSummaryRecord, ChainStore,
+    Checkpoint, CoverageRangeRecord, Page, StoreError, StoreMetadata, StoreResult,
+    TxDetailRecordV1, TxSummaryRecord,
 };
 use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, DB, Direction, IteratorMode, Options};
 use serde::{Serialize, de::DeserializeOwned};
@@ -12,6 +12,7 @@ const META: &str = "meta";
 const COVERAGE_RANGES: &str = "coverage_ranges";
 const BLOCKS_BY_HASH: &str = "blocks_by_hash";
 const BLOCKS_BY_SCORE: &str = "blocks_by_score";
+const BLOCK_EFFECTS: &str = "block_effects";
 const TX_BY_ID: &str = "tx_by_id";
 const TX_DETAIL_BY_ID: &str = "tx_detail_by_id";
 const TX_ACCEPTANCE: &str = "tx_acceptance";
@@ -141,6 +142,48 @@ impl ChainStore for RocksStore {
         self.db.write(batch).map_err(rocks_err)
     }
 
+    fn put_indexed_block(
+        &self,
+        block: &BlockSummaryRecord,
+        txs: &[TxSummaryRecord],
+        tx_details: &[TxDetailRecordV1],
+        effect: &BlockEffectRecordV1,
+        checkpoint: &Checkpoint,
+        coverage: &CoverageRangeRecord,
+    ) -> StoreResult<()> {
+        let blocks_by_hash_cf = self.cf(BLOCKS_BY_HASH)?;
+        let blocks_by_score_cf = self.cf(BLOCKS_BY_SCORE)?;
+        let tx_by_id_cf = self.cf(TX_BY_ID)?;
+        let tx_detail_by_id_cf = self.cf(TX_DETAIL_BY_ID)?;
+        let block_effects_cf = self.cf(BLOCK_EFFECTS)?;
+        let meta_cf = self.cf(META)?;
+        let coverage_cf = self.cf(COVERAGE_RANGES)?;
+
+        let mut batch = rocksdb::WriteBatch::default();
+        let encoded_block = encode(block)?;
+        batch.put_cf(&blocks_by_hash_cf, block.hash, &encoded_block);
+        batch.put_cf(
+            &blocks_by_score_cf,
+            block_score_key(block.blue_score, &block.hash),
+            &encoded_block,
+        );
+        for tx in txs {
+            batch.put_cf(&tx_by_id_cf, tx.txid, encode(tx)?);
+        }
+        for detail in tx_details {
+            batch.put_cf(&tx_detail_by_id_cf, detail.txid, encode(detail)?);
+        }
+        batch.put_cf(&block_effects_cf, effect.block_hash, encode(effect)?);
+        batch.put_cf(&meta_cf, CHECKPOINT_KEY, encode(checkpoint)?);
+        batch.put_cf(&coverage_cf, &coverage.range_id, encode(coverage)?);
+
+        self.db.write(batch).map_err(rocks_err)
+    }
+
+    fn block_effect_by_hash(&self, hash: &[u8; 32]) -> StoreResult<Option<BlockEffectRecordV1>> {
+        self.get_decoded(BLOCK_EFFECTS, hash)
+    }
+
     fn block_by_hash(&self, hash: &[u8; 32]) -> StoreResult<Option<BlockSummaryRecord>> {
         self.get_decoded(BLOCKS_BY_HASH, hash)
     }
@@ -266,12 +309,13 @@ impl ChainStore for RocksStore {
     }
 }
 
-fn column_families() -> [&'static str; 12] {
+fn column_families() -> [&'static str; 13] {
     [
         META,
         COVERAGE_RANGES,
         BLOCKS_BY_HASH,
         BLOCKS_BY_SCORE,
+        BLOCK_EFFECTS,
         TX_BY_ID,
         TX_DETAIL_BY_ID,
         TX_ACCEPTANCE,
@@ -356,8 +400,8 @@ fn page_prefix<T: DeserializeOwned>(
 #[cfg(test)]
 mod tests {
     use kasdex_store::{
-        ChainStore, CoverageClass, CoverageRangeRecord, TxDetailRecordV1, TxInputRecordV1,
-        TxOutputRecordV1,
+        BlockEffectRecordV1, ChainStore, CoverageClass, CoverageRangeRecord, TxDetailRecordV1,
+        TxInputRecordV1, TxOutputRecordV1,
     };
     use tempfile::TempDir;
 
@@ -581,6 +625,94 @@ mod tests {
         store.put_tx(&tx).unwrap();
         store.put_tx(&tx).unwrap();
         assert_eq!(store.tx_by_id(&tx.txid).unwrap(), Some(tx));
+    }
+
+    #[test]
+    fn applies_indexed_block_atomically() {
+        let (_dir, store) = test_store();
+        let block = BlockSummaryRecord {
+            hash: bytes(10),
+            blue_score: 10,
+            daa_score: 11,
+            timestamp_ms: 12,
+            tx_count: 1,
+        };
+        let tx = TxSummaryRecord {
+            txid: bytes(11),
+            accepting_block_hash: Some(block.hash),
+            input_count: 0,
+            output_count: 1,
+        };
+        let detail = TxDetailRecordV1 {
+            schema_version: 1,
+            detail_available: true,
+            detail_complete: false,
+            txid: tx.txid,
+            accepting_block_hash: block.hash,
+            accepting_daa_score: block.daa_score,
+            accepting_timestamp_ms: block.timestamp_ms,
+            version: 1,
+            lock_time: 0,
+            subnetwork_id: String::new(),
+            gas: 0,
+            payload: String::new(),
+            mass: 0,
+            storage_mass: 0,
+            compute_mass: 0,
+            block_time: 0,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+        };
+        let effect = BlockEffectRecordV1 {
+            schema_version: 1,
+            block_hash: block.hash,
+            daa_score: block.daa_score,
+            previous_checkpoint_hash: None,
+            previous_checkpoint_daa_score: None,
+            inserted_txids: vec![tx.txid],
+            created_outpoints: Vec::new(),
+            spent_outpoints: Vec::new(),
+            address_event_keys: Vec::new(),
+        };
+        let checkpoint = Checkpoint {
+            network: "kaspa-mainnet".to_owned(),
+            daa_score: block.daa_score,
+            block_hash: block.hash,
+        };
+        let coverage = CoverageRangeRecord {
+            schema_version: 1,
+            range_id: "default".to_owned(),
+            start_hash: block.hash,
+            start_daa_score: Some(block.daa_score),
+            end_hash: block.hash,
+            end_daa_score: block.daa_score,
+            source: "kaspa-mainnet".to_owned(),
+            coverage_class: CoverageClass::PrunedWindow,
+        };
+
+        store
+            .put_indexed_block(
+                &block,
+                std::slice::from_ref(&tx),
+                std::slice::from_ref(&detail),
+                &effect,
+                &checkpoint,
+                &coverage,
+            )
+            .unwrap();
+
+        assert_eq!(store.block_by_hash(&block.hash).unwrap(), Some(block));
+        assert_eq!(store.tx_by_id(&tx.txid).unwrap(), Some(tx));
+        assert_eq!(store.tx_detail_by_id(&detail.txid).unwrap(), Some(detail));
+        assert_eq!(
+            store.block_effect_by_hash(&effect.block_hash).unwrap(),
+            Some(effect)
+        );
+        assert_eq!(store.checkpoint().unwrap(), Some(checkpoint));
+        assert_eq!(
+            store.coverage_range(&coverage.range_id).unwrap(),
+            Some(coverage)
+        );
     }
 
     fn test_store() -> (TempDir, RocksStore) {

@@ -59,6 +59,25 @@ pub struct BlockSummaryRecord {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct BlockEffectRecordV1 {
+    pub schema_version: u16,
+    pub block_hash: [u8; 32],
+    pub daa_score: u64,
+    pub previous_checkpoint_hash: Option<[u8; 32]>,
+    pub previous_checkpoint_daa_score: Option<u64>,
+    pub inserted_txids: Vec<[u8; 32]>,
+    pub created_outpoints: Vec<OutpointRef>,
+    pub spent_outpoints: Vec<OutpointRef>,
+    pub address_event_keys: Vec<Vec<u8>>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct OutpointRef {
+    pub txid: [u8; 32],
+    pub output_index: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct TxSummaryRecord {
     pub txid: [u8; 32],
     pub accepting_block_hash: Option<[u8; 32]>,
@@ -142,6 +161,16 @@ pub trait ChainStore: Send + Sync {
     fn put_coverage_range(&self, coverage: &CoverageRangeRecord) -> StoreResult<()>;
 
     fn put_block(&self, block: &BlockSummaryRecord) -> StoreResult<()>;
+    fn put_indexed_block(
+        &self,
+        block: &BlockSummaryRecord,
+        txs: &[TxSummaryRecord],
+        tx_details: &[TxDetailRecordV1],
+        effect: &BlockEffectRecordV1,
+        checkpoint: &Checkpoint,
+        coverage: &CoverageRangeRecord,
+    ) -> StoreResult<()>;
+    fn block_effect_by_hash(&self, hash: &[u8; 32]) -> StoreResult<Option<BlockEffectRecordV1>>;
     fn block_by_hash(&self, hash: &[u8; 32]) -> StoreResult<Option<BlockSummaryRecord>>;
     fn blocks_by_score(
         &self,
@@ -212,6 +241,23 @@ where
 
     fn put_block(&self, block: &BlockSummaryRecord) -> StoreResult<()> {
         self.as_ref().put_block(block)
+    }
+
+    fn put_indexed_block(
+        &self,
+        block: &BlockSummaryRecord,
+        txs: &[TxSummaryRecord],
+        tx_details: &[TxDetailRecordV1],
+        effect: &BlockEffectRecordV1,
+        checkpoint: &Checkpoint,
+        coverage: &CoverageRangeRecord,
+    ) -> StoreResult<()> {
+        self.as_ref()
+            .put_indexed_block(block, txs, tx_details, effect, checkpoint, coverage)
+    }
+
+    fn block_effect_by_hash(&self, hash: &[u8; 32]) -> StoreResult<Option<BlockEffectRecordV1>> {
+        self.as_ref().block_effect_by_hash(hash)
     }
 
     fn block_by_hash(&self, hash: &[u8; 32]) -> StoreResult<Option<BlockSummaryRecord>> {

@@ -6,6 +6,7 @@ const META: &str = "meta";
 const COVERAGE_RANGES: &str = "coverage_ranges";
 const BLOCKS_BY_HASH: &str = "blocks_by_hash";
 const BLOCKS_BY_SCORE: &str = "blocks_by_score";
+const BLOCK_EFFECTS: &str = "block_effects";
 const TX_BY_ID: &str = "tx_by_id";
 const TX_DETAIL_BY_ID: &str = "tx_detail_by_id";
 const TX_ACCEPTANCE: &str = "tx_acceptance";
@@ -29,6 +30,7 @@ fn open_db() -> (TempDir, DB) {
         COVERAGE_RANGES,
         BLOCKS_BY_HASH,
         BLOCKS_BY_SCORE,
+        BLOCK_EFFECTS,
         TX_BY_ID,
         TX_DETAIL_BY_ID,
         TX_ACCEPTANCE,
