@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, path::PathBuf};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
@@ -20,6 +20,14 @@ enum Command {
         listen: SocketAddr,
         #[arg(long, default_value = ".kasdex/index")]
         data_dir: PathBuf,
+        #[arg(long)]
+        index_follow: bool,
+        #[arg(long, default_value = "http://127.0.0.1:16110")]
+        index_rpc_url: String,
+        #[arg(long, default_value_t = 100)]
+        index_limit_blocks: usize,
+        #[arg(long, default_value_t = 5)]
+        index_interval_secs: u64,
     },
     Openapi {
         #[arg(long)]
@@ -58,7 +66,24 @@ async fn main() -> anyhow::Result<()> {
     init_tracing();
 
     match Cli::parse().command {
-        Command::Serve { listen, data_dir } => serve(listen, data_dir).await,
+        Command::Serve {
+            listen,
+            data_dir,
+            index_follow,
+            index_rpc_url,
+            index_limit_blocks,
+            index_interval_secs,
+        } => {
+            serve(
+                listen,
+                data_dir,
+                index_follow,
+                index_rpc_url,
+                index_limit_blocks,
+                index_interval_secs,
+            )
+            .await
+        }
         Command::Openapi { output } => write_openapi(output),
         Command::Node { command } => match command {
             NodeCommand::Probe { rpc_url } => probe_node(rpc_url).await,
@@ -84,18 +109,79 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
-async fn serve(listen: SocketAddr, data_dir: PathBuf) -> anyhow::Result<()> {
-    let store = kasdex_store_rocks::RocksStore::open(&data_dir)
-        .with_context(|| format!("failed to open index store at {}", data_dir.display()))?;
+async fn serve(
+    listen: SocketAddr,
+    data_dir: PathBuf,
+    index_follow: bool,
+    index_rpc_url: String,
+    index_limit_blocks: usize,
+    index_interval_secs: u64,
+) -> anyhow::Result<()> {
+    let store = Arc::new(
+        kasdex_store_rocks::RocksStore::open(&data_dir)
+            .with_context(|| format!("failed to open index store at {}", data_dir.display()))?,
+    );
+    if index_follow {
+        spawn_indexer(
+            Arc::clone(&store),
+            index_rpc_url,
+            index_limit_blocks,
+            index_interval_secs,
+        );
+    }
+
     let listener = TcpListener::bind(listen)
         .await
         .with_context(|| format!("failed to bind {listen}"))?;
-    info!(%listen, data_dir = %data_dir.display(), "serving kasdex api");
+    info!(
+        %listen,
+        data_dir = %data_dir.display(),
+        index_follow,
+        "serving kasdex api"
+    );
 
     axum::serve(listener, kasdex_api::router_with_store(store))
         .with_graceful_shutdown(shutdown_signal())
         .await
         .context("api server failed")
+}
+
+fn spawn_indexer(
+    store: Arc<kasdex_store_rocks::RocksStore>,
+    rpc_url: String,
+    limit_blocks: usize,
+    interval_secs: u64,
+) {
+    tokio::spawn(async move {
+        loop {
+            match kasdex_indexer::run_bounded_backfill(
+                &store,
+                kasdex_indexer::BackfillConfig {
+                    rpc_url: rpc_url.clone(),
+                    limit_blocks,
+                    start_hash: None,
+                },
+            )
+            .await
+            {
+                Ok(report) => {
+                    info!(
+                        network = %report.network,
+                        start_hash = %report.start_hash,
+                        indexed_blocks = report.indexed_blocks,
+                        indexed_transactions = report.indexed_transactions,
+                        checkpoint_daa_score = ?report.checkpoint_daa_score,
+                        "indexer poll completed"
+                    );
+                }
+                Err(err) => {
+                    tracing::warn!(error = %err, "indexer poll failed");
+                }
+            }
+
+            time::sleep(time::Duration::from_secs(interval_secs)).await;
+        }
+    });
 }
 
 fn write_openapi(output: PathBuf) -> anyhow::Result<()> {

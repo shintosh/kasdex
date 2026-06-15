@@ -17,6 +17,7 @@ clap.workspace = true
 kasdex-api = { path = "../kasdex-api" }
 kasdex-indexer = { path = "../kasdex-indexer" }
 kasdex-node = { path = "../kasdex-node" }
+kasdex-store = { path = "../kasdex-store" }
 kasdex-store-rocks = { path = "../kasdex-store-rocks" }
 serde_json.workspace = true
 tokio.workspace = true

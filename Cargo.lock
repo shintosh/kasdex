@@ -1090,6 +1090,7 @@ dependencies = [
  "kasdex-api",
  "kasdex-indexer",
  "kasdex-node",
+ "kasdex-store",
  "kasdex-store-rocks",
  "serde_json",
  "tokio",

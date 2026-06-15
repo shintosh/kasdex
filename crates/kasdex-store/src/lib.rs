@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, thiserror::Error)]
@@ -101,4 +103,85 @@ pub trait ChainStore: Send + Sync {
         cursor: Option<&[u8]>,
         limit: usize,
     ) -> StoreResult<Page<AddressUtxoRecord>>;
+}
+
+impl<T> ChainStore for Arc<T>
+where
+    T: ChainStore + ?Sized,
+{
+    fn checkpoint(&self) -> StoreResult<Option<Checkpoint>> {
+        self.as_ref().checkpoint()
+    }
+
+    fn put_checkpoint(&self, checkpoint: &Checkpoint) -> StoreResult<()> {
+        self.as_ref().put_checkpoint(checkpoint)
+    }
+
+    fn put_block(&self, block: &BlockSummaryRecord) -> StoreResult<()> {
+        self.as_ref().put_block(block)
+    }
+
+    fn block_by_hash(&self, hash: &[u8; 32]) -> StoreResult<Option<BlockSummaryRecord>> {
+        self.as_ref().block_by_hash(hash)
+    }
+
+    fn blocks_by_score(
+        &self,
+        cursor: Option<&[u8]>,
+        limit: usize,
+    ) -> StoreResult<Page<BlockSummaryRecord>> {
+        self.as_ref().blocks_by_score(cursor, limit)
+    }
+
+    fn recent_blocks(
+        &self,
+        cursor: Option<&[u8]>,
+        limit: usize,
+    ) -> StoreResult<Page<BlockSummaryRecord>> {
+        self.as_ref().recent_blocks(cursor, limit)
+    }
+
+    fn put_tx(&self, tx: &TxSummaryRecord) -> StoreResult<()> {
+        self.as_ref().put_tx(tx)
+    }
+
+    fn tx_by_id(&self, txid: &[u8; 32]) -> StoreResult<Option<TxSummaryRecord>> {
+        self.as_ref().tx_by_id(txid)
+    }
+
+    fn put_address_history(&self, event: &AddressHistoryRecord) -> StoreResult<()> {
+        self.as_ref().put_address_history(event)
+    }
+
+    fn address_history(
+        &self,
+        script_hash: &[u8; 32],
+        cursor: Option<&[u8]>,
+        limit: usize,
+    ) -> StoreResult<Page<AddressHistoryRecord>> {
+        self.as_ref().address_history(script_hash, cursor, limit)
+    }
+
+    fn put_address_utxo(&self, utxo: &AddressUtxoRecord) -> StoreResult<()> {
+        self.as_ref().put_address_utxo(utxo)
+    }
+
+    fn delete_address_utxo(
+        &self,
+        script_hash: &[u8; 32],
+        txid: &[u8; 32],
+        output_index: u32,
+    ) -> StoreResult<()> {
+        self.as_ref()
+            .delete_address_utxo(script_hash, txid, output_index)
+    }
+
+    fn address_utxos(
+        &self,
+        script_hash: &[u8; 32],
+        cursor: Option<&[u8]>,
+        limit: usize,
+    ) -> StoreResult<Page<AddressUtxoRecord>> {
+        self.as_ref().address_utxos(script_hash, cursor, limit)
+    }
 }
