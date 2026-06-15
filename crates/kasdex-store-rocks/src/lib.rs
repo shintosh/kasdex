@@ -2,7 +2,8 @@ use std::path::Path;
 
 use kasdex_store::{
     AddressHistoryRecord, AddressUtxoRecord, BlockSummaryRecord, ChainStore, Checkpoint,
-    CoverageRangeRecord, Page, StoreError, StoreResult, TxDetailRecordV1, TxSummaryRecord,
+    CoverageRangeRecord, Page, StoreError, StoreMetadata, StoreResult, TxDetailRecordV1,
+    TxSummaryRecord,
 };
 use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, DB, Direction, IteratorMode, Options};
 use serde::{Serialize, de::DeserializeOwned};
@@ -21,6 +22,9 @@ const SPENDS_BY_OUTPOINT: &str = "spends_by_outpoint";
 const MEMPOOL: &str = "mempool";
 
 const CHECKPOINT_KEY: &[u8] = b"checkpoint";
+const STORE_METADATA_KEY: &[u8] = b"store_metadata";
+const STORE_SCHEMA_VERSION: u16 = 1;
+const KEY_LAYOUT_VERSION: u16 = 1;
 
 pub fn backend_name() -> &'static str {
     "rocksdb"
@@ -40,8 +44,11 @@ impl RocksStore {
             .into_iter()
             .map(|name| ColumnFamilyDescriptor::new(name, Options::default()));
 
-        let db = DB::open_cf_descriptors(&opts, path, families).map_err(rocks_err)?;
-        Ok(Self { db })
+        let store = Self {
+            db: DB::open_cf_descriptors(&opts, path, families).map_err(rocks_err)?,
+        };
+        store.initialize_metadata()?;
+        Ok(store)
     }
 
     fn put_encoded<T: Serialize>(
@@ -72,6 +79,27 @@ impl RocksStore {
             .cf_handle(name)
             .ok_or_else(|| StoreError::Backend(format!("missing column family {name}")))
     }
+
+    fn initialize_metadata(&self) -> StoreResult<()> {
+        match self.store_metadata()? {
+            Some(metadata)
+                if metadata.store_schema_version == STORE_SCHEMA_VERSION
+                    && metadata.backend == backend_name()
+                    && metadata.key_layout_version == KEY_LAYOUT_VERSION =>
+            {
+                Ok(())
+            }
+            Some(metadata) => Err(StoreError::Backend(format!(
+                "unsupported store metadata: schema={}, backend={}, key_layout={}",
+                metadata.store_schema_version, metadata.backend, metadata.key_layout_version
+            ))),
+            None => self.put_store_metadata(&StoreMetadata {
+                store_schema_version: STORE_SCHEMA_VERSION,
+                backend: backend_name().to_owned(),
+                key_layout_version: KEY_LAYOUT_VERSION,
+            }),
+        }
+    }
 }
 
 impl ChainStore for RocksStore {
@@ -81,6 +109,14 @@ impl ChainStore for RocksStore {
 
     fn put_checkpoint(&self, checkpoint: &Checkpoint) -> StoreResult<()> {
         self.put_encoded(META, CHECKPOINT_KEY, checkpoint)
+    }
+
+    fn store_metadata(&self) -> StoreResult<Option<StoreMetadata>> {
+        self.get_decoded(META, STORE_METADATA_KEY)
+    }
+
+    fn put_store_metadata(&self, metadata: &StoreMetadata) -> StoreResult<()> {
+        self.put_encoded(META, STORE_METADATA_KEY, metadata)
     }
 
     fn coverage_range(&self, range_id: &str) -> StoreResult<Option<CoverageRangeRecord>> {
@@ -330,6 +366,15 @@ mod tests {
     #[test]
     fn stores_checkpoint_blocks_and_txs() {
         let (_dir, store) = test_store();
+        assert_eq!(
+            store.store_metadata().unwrap(),
+            Some(StoreMetadata {
+                store_schema_version: 1,
+                backend: "rocksdb".to_owned(),
+                key_layout_version: 1,
+            })
+        );
+
         let checkpoint = Checkpoint {
             network: "mainnet".to_owned(),
             daa_score: 42,

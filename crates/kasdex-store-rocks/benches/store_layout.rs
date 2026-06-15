@@ -3,9 +3,11 @@ use rocksdb::{ColumnFamilyDescriptor, DB, IteratorMode, Options, WriteBatch};
 use tempfile::TempDir;
 
 const META: &str = "meta";
+const COVERAGE_RANGES: &str = "coverage_ranges";
 const BLOCKS_BY_HASH: &str = "blocks_by_hash";
 const BLOCKS_BY_SCORE: &str = "blocks_by_score";
 const TX_BY_ID: &str = "tx_by_id";
+const TX_DETAIL_BY_ID: &str = "tx_detail_by_id";
 const TX_ACCEPTANCE: &str = "tx_acceptance";
 const ADDRESS_HISTORY: &str = "address_history";
 const ADDRESS_UTXOS: &str = "address_utxos";
@@ -24,9 +26,11 @@ fn open_db() -> (TempDir, DB) {
 
     let families = [
         META,
+        COVERAGE_RANGES,
         BLOCKS_BY_HASH,
         BLOCKS_BY_SCORE,
         TX_BY_ID,
+        TX_DETAIL_BY_ID,
         TX_ACCEPTANCE,
         ADDRESS_HISTORY,
         ADDRESS_UTXOS,

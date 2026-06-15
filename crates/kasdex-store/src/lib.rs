@@ -43,6 +43,13 @@ pub struct CoverageRangeRecord {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct StoreMetadata {
+    pub store_schema_version: u16,
+    pub backend: String,
+    pub key_layout_version: u16,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct BlockSummaryRecord {
     pub hash: [u8; 32],
     pub blue_score: u64,
@@ -129,6 +136,8 @@ pub struct Page<T> {
 pub trait ChainStore: Send + Sync {
     fn checkpoint(&self) -> StoreResult<Option<Checkpoint>>;
     fn put_checkpoint(&self, checkpoint: &Checkpoint) -> StoreResult<()>;
+    fn store_metadata(&self) -> StoreResult<Option<StoreMetadata>>;
+    fn put_store_metadata(&self, metadata: &StoreMetadata) -> StoreResult<()>;
     fn coverage_range(&self, range_id: &str) -> StoreResult<Option<CoverageRangeRecord>>;
     fn put_coverage_range(&self, coverage: &CoverageRangeRecord) -> StoreResult<()>;
 
@@ -183,6 +192,14 @@ where
 
     fn put_checkpoint(&self, checkpoint: &Checkpoint) -> StoreResult<()> {
         self.as_ref().put_checkpoint(checkpoint)
+    }
+
+    fn store_metadata(&self) -> StoreResult<Option<StoreMetadata>> {
+        self.as_ref().store_metadata()
+    }
+
+    fn put_store_metadata(&self, metadata: &StoreMetadata) -> StoreResult<()> {
+        self.as_ref().put_store_metadata(metadata)
     }
 
     fn coverage_range(&self, range_id: &str) -> StoreResult<Option<CoverageRangeRecord>> {

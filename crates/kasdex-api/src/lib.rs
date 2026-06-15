@@ -20,6 +20,10 @@ use tower_http::trace::TraceLayer;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
+const CURSOR_MAGIC: &[u8; 4] = b"KDXC";
+const CURSOR_VERSION: u8 = 1;
+const CURSOR_TYPE_RECENT_BLOCKS: u8 = 1;
+
 #[derive(OpenApi)]
 #[openapi(
     paths(health, indexer_status, list_blocks, get_block, get_transaction, search),
@@ -215,14 +219,16 @@ async fn list_blocks(
         return Ok(Json(mocked_block_page(limit)));
     };
 
-    let cursor = decode_cursor(query.cursor.as_deref())?;
+    let cursor = decode_block_cursor(query.cursor.as_deref(), CURSOR_TYPE_RECENT_BLOCKS)?;
     let page = store
         .recent_blocks(cursor.as_deref(), limit as usize)
         .map_err(store_error)?;
 
     Ok(Json(BlockPage {
         items: page.items.into_iter().map(block_summary).collect(),
-        next_cursor: page.next_cursor.map(hex::encode),
+        next_cursor: page
+            .next_cursor
+            .map(|cursor| encode_cursor(CURSOR_TYPE_RECENT_BLOCKS, &cursor)),
         indexed_context: indexed_context(store)?,
     }))
 }
@@ -325,6 +331,40 @@ fn decode_cursor(cursor: Option<&str>) -> Result<Option<Vec<u8>>, ApiError> {
         .map(hex::decode)
         .transpose()
         .map_err(|_| ApiError::bad_request("cursor must be hex encoded"))
+}
+
+fn decode_block_cursor(
+    cursor: Option<&str>,
+    expected_cursor_type: u8,
+) -> Result<Option<Vec<u8>>, ApiError> {
+    let Some(decoded) = decode_cursor(cursor)? else {
+        return Ok(None);
+    };
+
+    if decoded.starts_with(CURSOR_MAGIC) {
+        if decoded.len() < 6 {
+            return Err(ApiError::bad_request("cursor is malformed"));
+        }
+        let version = decoded[4];
+        let cursor_type = decoded[5];
+        if version != CURSOR_VERSION || cursor_type != expected_cursor_type {
+            return Err(ApiError::bad_request(
+                "cursor is not valid for this endpoint",
+            ));
+        }
+        return Ok(Some(decoded[6..].to_vec()));
+    }
+
+    Ok(Some(decoded))
+}
+
+fn encode_cursor(cursor_type: u8, key: &[u8]) -> String {
+    let mut cursor = Vec::with_capacity(CURSOR_MAGIC.len() + 2 + key.len());
+    cursor.extend_from_slice(CURSOR_MAGIC);
+    cursor.push(CURSOR_VERSION);
+    cursor.push(cursor_type);
+    cursor.extend_from_slice(key);
+    hex::encode(cursor)
 }
 
 fn indexed_context(store: &dyn ChainStore) -> Result<IndexedContext, ApiError> {
